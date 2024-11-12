@@ -40,7 +40,7 @@ class HumanoidClimbEnv(gym.Env):
 
         self.current_stance = []
         self.desired_stance = []
-        self.desired_stance_index = 0
+        self.desired_stance_index = 0  # todo: why is desired stance index not 1?
         self.best_dist_to_stance = []
 
         # configure pybullet GUI
@@ -78,6 +78,7 @@ class HumanoidClimbEnv(gym.Env):
         # reward = self.calculate_reward_eq1()
         reward = self.calculate_reward_negative_distance()
         reached = self.check_reached_stance()
+        info['stance_reached'] = reached
 
         terminated = self.terminate_check()
         truncated = self.truncate_check()
