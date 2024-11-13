@@ -233,6 +233,51 @@
       "desired_holds": ["hold_10", "hold_13", "hold_2", "hold_5"],
       "force_attach": [1, 1, 1, null],
       "ignore_holds": [[], [], [], ["hold_1"]]
+    },
+    "6": {
+      "desired_holds": ["hold_13", "hold_13", -1, "hold_5"],
+      "force_attach": [null, 1, null, 1],
+      "ignore_holds": [[], [], [], []]
+    },
+    "7": {
+      "desired_holds": ["hold_13", "hold_13", "hold_6", "hold_5"],
+      "force_attach": [1, 1, null, 1],
+      "ignore_holds": [[], [], [], []]
+    },
+    "8": {
+      "desired_holds": ["hold_14", "hold_13", "hold_6", "hold_5"],
+      "force_attach": [null, 1, 1, 1],
+      "ignore_holds": [[], [], [], []]
+    },
+    "9": {
+      "desired_holds": ["hold_14", "hold_17", "hold_6", "hold_5"],
+      "force_attach": [1, null, 1, 1],
+      "ignore_holds": [[], [], [], []]
+    },
+    "10": {
+      "desired_holds": ["hold_14", "hold_17", -1, "hold_9"],
+      "force_attach": [1, 1, null, null],
+      "ignore_holds": [[], [], [], []]
+    },
+    "11": {
+      "desired_holds": ["hold_14", "hold_17", "hold_10", "hold_9"],
+      "force_attach": [1, 1, null, 1],
+      "ignore_holds": [[], [], [], []]
+    },
+    "12": {
+      "desired_holds": ["hold_18", "hold_17", "hold_10", "hold_9"],
+      "force_attach": [null, 1, 1, 1],
+      "ignore_holds": [[], [], [], []]
+    },
+    "13": {
+      "desired_holds": ["hold_18", "hold_20", "hold_10", "hold_9"],
+      "force_attach": [1, null, 1, 1],
+      "ignore_holds": [[], [], [], []]
+    },
+    "14": {
+      "desired_holds": ["hold_20", "hold_20", "hold_10", "hold_9"],
+      "force_attach": [null, 1, 1, 1],
+      "ignore_holds": [[], [], [], []]
     }
   }
 
