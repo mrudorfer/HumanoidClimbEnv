@@ -7,7 +7,7 @@ from humanoid_climb.climbing_config import ClimbingConfig
 
 
 # load config, create and reset env, load policy
-config = ClimbingConfig('./config.json')
+config = ClimbingConfig('./configs/config.json')
 env = gym.make('HumanoidClimb-v0',
                render_mode='human',
                max_ep_steps=10000000,
