@@ -38,11 +38,6 @@ class HumanoidClimbEnv(gym.Env):
 
         self.np_random, _ = gym.utils.seeding.np_random()
 
-        self.current_stance = []
-        self.desired_stance = []
-        self.desired_stance_index = 0  # todo: why is desired stance index not 1?
-        self.best_dist_to_stance = []
-
         # configure pybullet GUI
         self._p.setAdditionalSearchPath(pybullet_data.getDataPath())
         self._p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
@@ -55,6 +50,10 @@ class HumanoidClimbEnv(gym.Env):
         self.wall = Asset(self._p, self.config.surface)
         self.climber = Humanoid(self._p, self.config.climber)
 
+        self.current_stance = self.motion_path[0]
+        self.desired_stance_index = 1
+        self.best_dist_to_stance = []
+        self.desired_stance = []
         self.debug_stance_text = self._p.addUserDebugText(text=f"", textPosition=[0, 0, 0], textSize=1, lifeTime=0.1, textColorRGB=[1.0, 0.0, 1.0])
 
         self.targets = dict()
@@ -63,6 +62,8 @@ class HumanoidClimbEnv(gym.Env):
             self._p.addUserDebugText(text=key, textPosition=self.targets[key].body.initialPosition, textSize=0.7, lifeTime=0.0, textColorRGB=[0.0, 0.0, 1.0])
 
         self.climber.targets = self.targets
+        self.set_desired_stance(self.desired_stance_index)
+
 
     def step(self, action):
 
@@ -89,20 +90,18 @@ class HumanoidClimbEnv(gym.Env):
         super().reset(seed=seed)
 
         self.climber.reset()
-        self.climber.exclude_targets = self.motion_exclude_targets[0]
         # if self.init_from_state: self.robot.initialise_from_state()
         self.steps = 0
-        self.current_stance = [-1, -1, -1, -1] # TODO
-        self.desired_stance_index = 0
-        self.desired_stance = self.motion_path[0]
-        self.best_dist_to_stance = self.get_distance_from_desired_stance()
+        self.current_stance = self.motion_path[0]
+        self.set_desired_stance(1)
 
         ob = self._get_obs()
         info = self._get_info()
 
-        for key in self.targets:
-            colour = [0.0, 0.7, 0.1, 0.75] if key in self.desired_stance else [1.0, 0, 0, 0.75]
-            self._p.changeVisualShape(objectUniqueId=self.targets[key].id, linkIndex=-1, rgbaColor=colour)
+        if self.render_mode == 'human':
+            for key in self.targets:
+                colour = [0.0, 0.7, 0.1, 0.75] if key in self.desired_stance else [1.0, 0, 0, 0.75]
+                self._p.changeVisualShape(objectUniqueId=self.targets[key].id, linkIndex=-1, rgbaColor=colour)
 
         return np.array(ob, dtype=np.float32), info
 
@@ -159,6 +158,31 @@ class HumanoidClimbEnv(gym.Env):
 
         return reward
 
+    def set_desired_stance(self, stance_index):
+        # update stance and target info
+        self.desired_stance_index = stance_index
+        new_stance = self.motion_path[self.desired_stance_index]
+        self.climber.exclude_targets = self.motion_exclude_targets[self.desired_stance_index]
+        self.desired_stance, old_stance = new_stance, self.desired_stance
+
+        # reset best_dist
+        self.best_dist_to_stance = self.get_distance_from_desired_stance()
+
+        # update visualisation
+        if self.render_mode == 'human':
+            # reset previous desired target colours to red
+            for key in old_stance:
+                if key == -1: continue
+                self._p.changeVisualShape(objectUniqueId=self.targets[key].id, linkIndex=-1,
+                                          rgbaColor=[1.0, 0.0, 0.0, 0.75])
+
+            # set new desired targets to green
+            for key in self.desired_stance:
+                if key == -1: continue
+                self._p.changeVisualShape(objectUniqueId=self.targets[key].id, linkIndex=-1,
+                                          rgbaColor=[0.0, 0.7, 0.1, 0.75])
+
+
     def check_reached_stance(self):
         reached = False
 
@@ -166,27 +190,11 @@ class HumanoidClimbEnv(gym.Env):
         if self.current_stance == self.desired_stance:
             reached = True
 
-            self.desired_stance_index += 1
-            if self.desired_stance_index > len(self.motion_path) - 1: return
-
-            new_stance = self.motion_path[self.desired_stance_index]
-            self.climber.exclude_targets = self.motion_exclude_targets[self.desired_stance_index]
-
-            # Reset current desired target colours to red
-            for key in self.desired_stance:
-                if key == -1: continue
-                self._p.changeVisualShape(objectUniqueId=self.targets[key].id, linkIndex=-1,
-                                          rgbaColor=[1.0, 0.0, 0.0, 0.75])
-            self.desired_stance = new_stance
-
-            # Set new desired targets to green
-            for key in self.desired_stance:
-                if key == -1: continue
-                self._p.changeVisualShape(objectUniqueId=self.targets[key].id, linkIndex=-1,
-                                          rgbaColor=[0.0, 0.7, 0.1, 0.75])
-
-            # Reset best_dist
-            self.best_dist_to_stance = self.get_distance_from_desired_stance()
+            stance_idx = self.desired_stance_index + 1
+            if stance_idx >= len(self.motion_path):
+                # final stance reached
+                return
+            self.set_desired_stance(stance_idx)
 
         return reached
 
