@@ -1,5 +1,6 @@
 import random
 from typing import List
+from warnings import deprecated
 
 import numpy as np
 import pybullet as p
@@ -18,7 +19,7 @@ class Humanoid:
         orientation = config['orientation']
 
         self._p = bullet_client
-        self.power = power
+        self.global_power_factor = power
 
         # TODO: make dynamic
         self.robot = bullet_client.loadMJCF(f_name, flags=p.URDF_USE_SELF_COLLISION)[0]
@@ -51,48 +52,61 @@ class Humanoid:
         self.targets = None
         self.exclude_targets = []
 
-    def apply_action(self, a, override=None):
-        # Actions are split into joint actions and grasping actions
-        # Grasping actions are the last x elements of the array, where x is the number of end-effectors
-        body_actions = a[0:len(self.motors)]
-        grasp_actions = a[-len(self.effectors):]
+    def apply_torque_actions(self, actions):
+        # torque actions are the first n elements of the action array
+        torque_actions = actions[0:len(self.motors)]
+        for i, m, motor_power in zip(range(17), self.motors, self.motor_power):
+            m.set_motor_torque(float(motor_power * self.global_power_factor * np.clip(torque_actions[i], -1, +1)))
 
+    def apply_grasp_actions(self, actions, override=None):
+        # grasp actions are the last x elements of the array, where x is the number of end-effectors
+        grasp_actions = actions[-len(self.effectors):]
+
+        # override grasp actions if necessary
         if override is not None:
             for i in range(len(override)):
-                if override[i] != None:
+                if override[i] is not None:
                     grasp_actions[i] = override[i]
 
-        force_gain = 1
-        for i, m, power in zip(range(17), self.motors, self.motor_power):
-            m.set_motor_torque(float(force_gain * power * self.power * np.clip(body_actions[i], -1, +1)))
-
+        # execute grasp actions
         for eff_index in range(len(self.effectors)):
             if grasp_actions[eff_index] > 0:
                 self.attach(eff_index)
             else:
                 self.detach(eff_index)
 
+    def apply_action(self, a, override=None):
+        self.apply_torque_actions(a)
+        self.apply_grasp_actions(a, override)
+
+    def attempt_attach_eff_to_hold(self, eff_index, hold):
+        # attaches the effector to the corresponding hold if the hold is near enough
+        # returns True if attached, else False
+        hold_id = self.targets[hold].id
+        effector = self.effectors[eff_index]
+
+        close_enough = False
+        closest_points = self._p.getClosestPoints(hold_id, self.robot, 0.1, -1, effector.bodyPartIndex)
+        for pt in closest_points:
+            dist = pt[8]
+            if dist < 0.0:
+                close_enough = True
+                break
+
+        if close_enough:
+            self.force_attach(eff_index=eff_index, target_key=hold, force=5000, attach_pos=effector.current_position())
+            return True
+
+        return False
+
     def attach(self, eff_index):
         if self.effector_constraints[eff_index] != -1:
             return
 
-        effector = self.effectors[eff_index]
-        effector_pos = effector.current_position()
-        for key in self.targets:
-            target = self.targets[key]
-            cp = self._p.getClosestPoints(target.id, self.robot, 1.0, -1, effector.bodyPartIndex)
-            if len(cp) < 1:
-                continue
-            contact_distance = cp[0][8]
-
-            if contact_distance < 0.0:
-                self.force_attach(eff_index=eff_index, target_key=key, force=5000, attach_pos=effector_pos)
-                break
-
-            # dist = np.linalg.norm(np.array(eff_pos) - np.array(target.pos))
-            # if dist < 0.1:
-            #     self.force_attach(limb_link=effector, target=target, force=1000, attach_pos=eff_pos)
-            #     break
+        for key, in self.targets.keys():
+            # this goes through all the holds (targets) and attaches to whichever hold is close enough
+            # irrespective of desired stance
+            self.attempt_attach_eff_to_hold(eff_index, key)
 
     def force_attach(self, eff_index, target_key, force=-1, attach_pos=None):
         constraint = self.effector_constraints[eff_index]

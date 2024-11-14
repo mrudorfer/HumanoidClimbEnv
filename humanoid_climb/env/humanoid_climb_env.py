@@ -35,6 +35,7 @@ class HumanoidClimbEnv(gym.Env):
         # 17 joint actions + 4 grasp actions
         self.action_space = gym.spaces.Box(-1, 1, (21,), np.float32)
         self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(306,), dtype=np.float32)
+        self.sim_steps_per_action = config.sim_steps_per_action
 
         self.np_random, _ = gym.utils.seeding.np_random()
 
@@ -43,7 +44,6 @@ class HumanoidClimbEnv(gym.Env):
         self._p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
         self._p.resetDebugVisualizerCamera(cameraDistance=4, cameraYaw=-90, cameraPitch=0, cameraTargetPosition=[0, 0, 3])
         self._p.setGravity(0, 0, -9.8)
-        self._p.setPhysicsEngineParameter(fixedTimeStep= self.config.timestep_interval, numSubSteps=self.config.timestep_per_action)
 
         self.floor = self._p.loadURDF("plane.urdf")
         self.floor = Asset(self._p, self.config.plane)
@@ -54,6 +54,7 @@ class HumanoidClimbEnv(gym.Env):
         self.desired_stance_index = 1
         self.best_dist_to_stance = []
         self.desired_stance = []
+        self.limbs_transitioning = []
         self.debug_stance_text = self._p.addUserDebugText(text=f"", textPosition=[0, 0, 0], textSize=1, lifeTime=0.1, textColorRGB=[1.0, 0.0, 1.0])
 
         self.targets = dict()
@@ -66,25 +67,36 @@ class HumanoidClimbEnv(gym.Env):
 
 
     def step(self, action):
+        # apply torque actions
+        self.climber.apply_torque_actions(action)
 
-        self._p.stepSimulation()
+        # step simulation
+        for _ in range(self.sim_steps_per_action):
+            self._p.stepSimulation()
         self.steps += 1
 
-        self.climber.apply_action(action, self.action_override[self.desired_stance_index])
+        # connect climber to holds and update stance
+        self.perform_grasp_actions()
         self.update_stance()
+        stance_reached = self.current_stance == self.desired_stance
+        goal_reached = self.current_stance == self.motion_path[-1]
+
+        # advance to next transition
+        if stance_reached and not goal_reached:
+            # todo: will have to release some limbs again
+            self.set_desired_stance(self.desired_stance_index+1)
 
         ob = self._get_obs()
         info = self._get_info()
+        info['stance_reached'] = stance_reached
 
         # reward = self.calculate_reward_eq1()
         reward = self.calculate_reward_negative_distance()
-        reached = self.check_reached_stance()
-        info['stance_reached'] = reached
 
-        terminated = self.terminate_check()
-        truncated = self.truncate_check()
+        terminate = goal_reached or (self.is_on_floor())
+        truncate = self.steps >= self.max_ep_steps
 
-        return ob, reward, terminated, truncated, info
+        return ob, reward, terminate, truncate, info
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
@@ -165,6 +177,9 @@ class HumanoidClimbEnv(gym.Env):
         self.climber.exclude_targets = self.motion_exclude_targets[self.desired_stance_index]
         self.desired_stance, old_stance = new_stance, self.desired_stance
 
+        # check which limbs are transitioning
+        self.limbs_transitioning = [hold1 != hold2 for hold1, hold2 in zip(self.desired_stance, old_stance)]
+
         # reset best_dist
         self.best_dist_to_stance = self.get_distance_from_desired_stance()
 
@@ -182,21 +197,13 @@ class HumanoidClimbEnv(gym.Env):
                 self._p.changeVisualShape(objectUniqueId=self.targets[key].id, linkIndex=-1,
                                           rgbaColor=[0.0, 0.7, 0.1, 0.75])
 
+    def perform_grasp_actions(self):
+        for i, (transitioning, target) in enumerate(zip(self.limbs_transitioning, self.desired_stance)):
+            if transitioning:
+                attached = self.climber.attempt_attach_eff_to_hold(i, target)
+                if attached:
+                    self.limbs_transitioning[i] = False
 
-    def check_reached_stance(self):
-        reached = False
-
-        # Check if stance complete
-        if self.current_stance == self.desired_stance:
-            reached = True
-
-            stance_idx = self.desired_stance_index + 1
-            if stance_idx >= len(self.motion_path):
-                # final stance reached
-                return
-            self.set_desired_stance(stance_idx)
-
-        return reached
 
     def update_stance(self):
         self.current_stance = self.climber.effector_attached_to
@@ -224,21 +231,6 @@ class HumanoidClimbEnv(gym.Env):
             distance = np.abs(np.linalg.norm(np.array(desired_hold_pos) - np.array(current_eff_pos)))
             dist_away[eff_index] = distance
         return dist_away
-
-    def terminate_check(self):
-        terminated = False
-
-        if self.desired_stance_index > len(self.motion_path)-1:
-            terminated = True
-
-        if self.is_on_floor():
-            terminated = True
-
-        return terminated
-
-    def truncate_check(self):
-        truncated = True if self.steps >= self.max_ep_steps else False
-        return truncated
 
     def _get_obs(self):
         obs = []
@@ -275,25 +267,20 @@ class HumanoidClimbEnv(gym.Env):
         return np.array(obs, dtype=np.float32)
 
     def _get_info(self):
-        info = dict()
-
-        success = True if self.current_stance == self.desired_stance else False
-        info['is_success'] = success
-
+        info = {
+            'is_success': self.current_stance == self.desired_stance
+        }
         return info
 
     def is_on_floor(self):
-        touching_floor = False
         floor_contact = self._p.getContactPoints(bodyA=self.climber.robot, bodyB=self.floor.id)
         for i in range(len(floor_contact)):
             contact_body = floor_contact[i][3]
-            # TODO
             exclude_list = [self.climber.parts["left_foot"].bodyPartIndex, self.climber.parts["right_foot"].bodyPartIndex]
             if contact_body not in exclude_list:
-                touching_floor = True
-                break
+                return True
 
-        return touching_floor
+        return False
 
     def is_touching_body(self, bodyB):
         contact_points = self._p.getContactPoints(bodyA=self.climber.robot, bodyB=bodyB)

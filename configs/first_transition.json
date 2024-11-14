@@ -1,6 +1,5 @@
 {
-  "timestep_per_action": 5,
-  "timestep_interval": 0.00416666667,
+  "sim_steps_per_action": 1,
 
   "assets": {
     "asset_climber_robot": {

@@ -163,7 +163,7 @@ if __name__ == '__main__':
 	parser.add_argument('-t', '--train', action='store_true')
 	parser.add_argument('-f', '--file', required=False, default=None)
 	parser.add_argument('-s', '--test', metavar='path_to_model')
-	parser.add_argument('-n', '--n_steps', type=int, default=int(50000000))
+	parser.add_argument('-n', '--n_steps', type=int, default=int(50_000_000))
 
 	args = parser.parse_args()
 
