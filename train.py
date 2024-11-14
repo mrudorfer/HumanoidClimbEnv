@@ -16,6 +16,7 @@ from stable_baselines3.common.callbacks import EvalCallback
 import wandb
 from wandb.integration.sb3 import WandbCallback
 import humanoid_climb.stances as stances
+from humanoid_climb.climbing_config import ClimbingConfig
 
 # Create directories to hold models and logs
 model_dir = "models"
@@ -46,9 +47,9 @@ class CustomCallback(BaseCallback):
 		self.logger.record("climb/rollout_count", self.rollout_count)
 
 
-def make_env(env_id: str, rank: int, seed: int = 0, max_steps: int = 1000, stance: stances.Stance = stances.STANCE_NONE) -> gym.Env:
+def make_env(env_id: str, rank: int, config, seed: int = 0, max_steps: int = 1000) -> gym.Env:
 	def _init():
-		env = gym.make(env_id, render_mode=None, max_ep_steps=max_steps, **stance.get_args())
+		env = gym.make(env_id, config=config, render_mode=None, max_ep_steps=max_steps)
 		m_env = Monitor(env)
 		m_env.reset(seed=seed + rank)
 		return m_env
@@ -57,25 +58,25 @@ def make_env(env_id: str, rank: int, seed: int = 0, max_steps: int = 1000, stanc
 	return _init
 
 
-def train(env_name, sb3_algo, workers, path_to_model=None):
+def train(env_name, sb3_algo, workers, n_steps, path_to_model=None):
 	config = {
 		"policy_type": "MlpPolicy",
-		"total_timesteps": 50000000,
+		"total_timesteps": n_steps,
 		"env_name": env_name,
 	}
 	run = wandb.init(
-		project="HumanoidClimb-2",
+		project="HumanoidClimb",
 		config=config,
 		sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
 		monitor_gym=False,  # auto-upload the videos of agents playing the game
 		save_code=False,  # optional
-		# id="6sbyjyfr"
 	)
 
+	climbing_config = ClimbingConfig('./configs/first_transition.json')
 	max_ep_steps = 600
-	stances.set_root_path("./humanoid_climb")
-	stance = stances.STANCE_14_1
-	vec_env = SubprocVecEnv([make_env(env_name, i, max_steps=max_ep_steps, stance=stance) for i in range(workers)], start_method="spawn")
+	# stances.set_root_path("./humanoid_climb")
+	# stance = stances.STANCE_14_1
+	vec_env = SubprocVecEnv([make_env(env_name, i, climbing_config, max_steps=max_ep_steps) for i in range(workers)], start_method="spawn")
 
 	model = None
 	save_path = f"{model_dir}/{run.id}"
@@ -156,21 +157,23 @@ if __name__ == '__main__':
 
 	# Parse command line inputs
 	parser = argparse.ArgumentParser(description='Train or test model.')
-	parser.add_argument('gymenv', help='Gymnasium environment i.e. Humanoid-v4')
-	parser.add_argument('sb3_algo', help='StableBaseline3 RL algorithm i.e. SAC, TD3')
-	parser.add_argument('-w', '--workers', type=int)
+	parser.add_argument('--gymenv', type=str, default='HumanoidClimb-v0', help='Gymnasium environment i.e. Humanoid-v4')
+	parser.add_argument('--sb3_algo', type=str, choices=['PPO', 'SAC'], default='PPO', help='StableBaseline3 RL algorithm i.e. SAC, TD3')
+	parser.add_argument('-w', '--workers', type=int, default=int(24))
 	parser.add_argument('-t', '--train', action='store_true')
 	parser.add_argument('-f', '--file', required=False, default=None)
 	parser.add_argument('-s', '--test', metavar='path_to_model')
+	parser.add_argument('-n', '--n_steps', type=int, default=int(50000000))
+
 	args = parser.parse_args()
 
 	if args.train:
 		if args.file is None:
 			print(f'<< Training from scratch! >>')
-			train(args.gymenv, args.sb3_algo, args.workers)
+			train(args.gymenv, args.sb3_algo, args.workers, args.n_steps)
 		elif os.path.isfile(args.file):
 			print(f'<< Continuing {args.file} >>')
-			train(args.gymenv, args.sb3_algo, args.workers, args.file)
+			train(args.gymenv, args.sb3_algo, args.workers, args.n_steps, args.file)
 
 	if args.test:
 		if os.path.isfile(args.test):
