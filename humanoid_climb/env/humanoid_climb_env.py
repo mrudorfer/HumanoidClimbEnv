@@ -43,7 +43,6 @@ class HumanoidClimbEnv(gym.Env):
         self._p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
         self._p.resetDebugVisualizerCamera(cameraDistance=4, cameraYaw=-90, cameraPitch=0, cameraTargetPosition=[0, 0, 3])
         self._p.setGravity(0, 0, -9.8)
-        self._p.setPhysicsEngineParameter(fixedTimeStep= self.config.timestep_interval, numSubSteps=self.config.timestep_per_action)
 
         self.floor = self._p.loadURDF("plane.urdf")
         self.floor = Asset(self._p, self.config.plane)
@@ -228,7 +227,7 @@ class HumanoidClimbEnv(gym.Env):
     def terminate_check(self):
         terminated = False
 
-        if self.desired_stance_index > len(self.motion_path)-1:
+        if self.current_stance == self.motion_path[-1]:
             terminated = True
 
         if self.is_on_floor():
