@@ -1,6 +1,5 @@
 import random
 from typing import List
-from warnings import deprecated
 
 import numpy as np
 import pybullet as p
@@ -50,34 +49,12 @@ class Humanoid:
                 # print(f"{geom} set to group {collision_groups[geom][0]} & mask {collision_groups[geom][1]}")
 
         self.targets = None
-        self.exclude_targets = []
 
     def apply_torque_actions(self, actions):
         # torque actions are the first n elements of the action array
         torque_actions = actions[0:len(self.motors)]
         for i, m, motor_power in zip(range(17), self.motors, self.motor_power):
             m.set_motor_torque(float(motor_power * self.global_power_factor * np.clip(torque_actions[i], -1, +1)))
-
-    def apply_grasp_actions(self, actions, override=None):
-        # grasp actions are the last x elements of the array, where x is the number of end-effectors
-        grasp_actions = actions[-len(self.effectors):]
-
-        # override grasp actions if necessary
-        if override is not None:
-            for i in range(len(override)):
-                if override[i] is not None:
-                    grasp_actions[i] = override[i]
-
-        # execute grasp actions
-        for eff_index in range(len(self.effectors)):
-            if grasp_actions[eff_index] > 0:
-                self.attach(eff_index)
-            else:
-                self.detach(eff_index)
-
-    def apply_action(self, a, override=None):
-        self.apply_torque_actions(a)
-        self.apply_grasp_actions(a, override)
 
     def attempt_attach_eff_to_hold(self, eff_index, hold):
         # attaches the effector to the corresponding hold if the hold is near enough
@@ -99,26 +76,12 @@ class Humanoid:
 
         return False
 
-    def attach(self, eff_index):
-        if self.effector_constraints[eff_index] != -1:
-            return
-
-        for key, in self.targets.keys():
-            # this goes through all the holds (targets) and attaches to whichever hold is close enough
-            # irrespective of desired stance
-            self.attempt_attach_eff_to_hold(eff_index, key)
-
     def force_attach(self, eff_index, target_key, force=-1, attach_pos=None):
         constraint = self.effector_constraints[eff_index]
         if constraint != -1:  # if already attached, de-attach
             self.detach(eff_index)
 
         target = self.targets[target_key]
-        exclude_list = self.exclude_targets[eff_index]
-        if len(exclude_list) > 0:
-            if target_key in exclude_list:
-                return
-
         if attach_pos is None:
             attach_pos = [0, 0, 0]
 

@@ -13,57 +13,53 @@ class HumanoidClimbEnv(gym.Env):
     metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 60}
 
     def __init__(self, config, render_mode: Optional[str] = None, max_ep_steps: Optional[int] = 602, state_file: Optional[str] = None):
-
+        # general configuration
+        self.np_random, _ = gym.utils.seeding.np_random()
         self.config = config
-
         self.render_mode = render_mode
         self.max_ep_steps = max_ep_steps
-        self.steps = 0
 
-        self.motion_path = [self.config.stance_path[stance]['desired_holds'] for stance in self.config.stance_path]
-        self.motion_exclude_targets = [self.config.stance_path[stance]['ignore_holds'] for stance in self.config.stance_path]
-        self.action_override = [self.config.stance_path[stance]['force_attach'] for stance in self.config.stance_path]
 
-        self.init_from_state = False if state_file is None else True
-        self.state_file = state_file
+        # 17 joint actions + no grasp actions
+        self.action_space = gym.spaces.Box(-1, 1, (17,), np.float32)
+        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(306,), dtype=np.float32)
 
+        # configure pybullet GUI and load environment
         if self.render_mode == 'human':
             self._p = BulletClient(p.GUI)
+            self._p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
+            self._p.resetDebugVisualizerCamera(cameraDistance=4, cameraYaw=-90, cameraPitch=0, cameraTargetPosition=[0, 0, 3])
         else:
             self._p = BulletClient(p.DIRECT)
 
-        # 17 joint actions + 4 grasp actions
-        self.action_space = gym.spaces.Box(-1, 1, (21,), np.float32)
-        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(306,), dtype=np.float32)
-        self.sim_steps_per_action = config.sim_steps_per_action
-
-        self.np_random, _ = gym.utils.seeding.np_random()
-
-        # configure pybullet GUI
         self._p.setAdditionalSearchPath(pybullet_data.getDataPath())
-        self._p.configureDebugVisualizer(p.COV_ENABLE_GUI, 0)
-        self._p.resetDebugVisualizerCamera(cameraDistance=4, cameraYaw=-90, cameraPitch=0, cameraTargetPosition=[0, 0, 3])
         self._p.setGravity(0, 0, -9.8)
-
         self.floor = self._p.loadURDF("plane.urdf")
         self.floor = Asset(self._p, self.config.plane)
         self.wall = Asset(self._p, self.config.surface)
         self.climber = Humanoid(self._p, self.config.climber)
-
-        self.current_stance = self.motion_path[0]
-        self.desired_stance_index = 1
-        self.best_dist_to_stance = []
-        self.desired_stance = []
-        self.limbs_transitioning = []
-        self.debug_stance_text = self._p.addUserDebugText(text=f"", textPosition=[0, 0, 0], textSize=1, lifeTime=0.1, textColorRGB=[1.0, 0.0, 1.0])
-
         self.targets = dict()
         for key in self.config.holds:
             self.targets[key] = Asset(self._p, self.config.holds[key])
             self._p.addUserDebugText(text=key, textPosition=self.targets[key].body.initialPosition, textSize=0.7, lifeTime=0.0, textColorRGB=[0.0, 0.0, 1.0])
-
         self.climber.targets = self.targets
-        self.set_desired_stance(self.desired_stance_index)
+
+        self.debug_stance_text = self._p.addUserDebugText(text=f"", textPosition=[0, 0, 0], textSize=1, lifeTime=0.1, textColorRGB=[1.0, 0.0, 1.0])
+
+        # initialization of variables
+        self.motion_path = [self.config.stance_path[stance]['desired_holds'] for stance in self.config.stance_path]
+        self.init_from_state = False if state_file is None else True
+        self.state_file = state_file
+        self.sim_steps_per_action = config.sim_steps_per_action
+
+        self.steps = 0
+        self.current_stance = self.motion_path[0]
+        self.best_dist_to_stance = []
+        self.desired_stance = []
+        self.limbs_transitioning = []
+
+        self.desired_stance_index = 0
+        self.set_next_desired_stance()
 
 
     def step(self, action):
@@ -83,12 +79,14 @@ class HumanoidClimbEnv(gym.Env):
 
         # advance to next transition
         if stance_reached and not goal_reached:
-            # todo: will have to release some limbs again
-            self.set_desired_stance(self.desired_stance_index+1)
+            self.set_next_desired_stance()
+            self.release_holds()
 
         ob = self._get_obs()
-        info = self._get_info()
-        info['stance_reached'] = stance_reached
+        info = {
+            'is_success': goal_reached,
+            'stance_reached': stance_reached
+        }
 
         # reward = self.calculate_reward_eq1()
         reward = self.calculate_reward_negative_distance()
@@ -102,13 +100,16 @@ class HumanoidClimbEnv(gym.Env):
         super().reset(seed=seed)
 
         self.climber.reset()
-        # if self.init_from_state: self.robot.initialise_from_state()
         self.steps = 0
         self.current_stance = self.motion_path[0]
-        self.set_desired_stance(1)
+        self.desired_stance_index = 0
+        self.set_next_desired_stance()
 
         ob = self._get_obs()
-        info = self._get_info()
+        info = {
+            'is_success': False,
+            'stance_reached': False
+        }
 
         if self.render_mode == 'human':
             for key in self.targets:
@@ -125,10 +126,10 @@ class HumanoidClimbEnv(gym.Env):
 
         reward = np.clip(-1 * np.sum(current_dist_away), -2, float('inf'))
         # reward += 1000 if self.current_stance == self.desired_stance else 0
-        if self.is_on_floor():
-            reward += (self.max_ep_steps - self.steps) * -2
 
-        # self.visualise_reward(reward, -6, 0)
+        if self.is_on_floor():
+            # episode will be terminated, i.e., put maximum punishment for all remaining steps
+            reward += (self.max_ep_steps - self.steps) * -2
 
         return reward
 
@@ -170,15 +171,13 @@ class HumanoidClimbEnv(gym.Env):
 
         return reward
 
-    def set_desired_stance(self, stance_index):
+    def set_next_desired_stance(self):
         # update stance and target info
-        self.desired_stance_index = stance_index
-        new_stance = self.motion_path[self.desired_stance_index]
-        self.climber.exclude_targets = self.motion_exclude_targets[self.desired_stance_index]
-        self.desired_stance, old_stance = new_stance, self.desired_stance
+        self.desired_stance_index += 1
+        self.desired_stance = self.motion_path[self.desired_stance_index]
 
         # check which limbs are transitioning
-        self.limbs_transitioning = [hold1 != hold2 for hold1, hold2 in zip(self.desired_stance, old_stance)]
+        self.limbs_transitioning = [hold1 != hold2 for hold1, hold2 in zip(self.desired_stance, self.current_stance)]
 
         # reset best_dist
         self.best_dist_to_stance = self.get_distance_from_desired_stance()
@@ -186,7 +185,7 @@ class HumanoidClimbEnv(gym.Env):
         # update visualisation
         if self.render_mode == 'human':
             # reset previous desired target colours to red
-            for key in old_stance:
+            for key in self.current_stance:
                 if key == -1: continue
                 self._p.changeVisualShape(objectUniqueId=self.targets[key].id, linkIndex=-1,
                                           rgbaColor=[1.0, 0.0, 0.0, 0.75])
@@ -204,6 +203,10 @@ class HumanoidClimbEnv(gym.Env):
                 if attached:
                     self.limbs_transitioning[i] = False
 
+    def release_holds(self):
+        for i, transitioning in enumerate(self.limbs_transitioning):
+            if transitioning:
+                self.climber.detach(i)
 
     def update_stance(self):
         self.current_stance = self.climber.effector_attached_to
@@ -229,6 +232,7 @@ class HumanoidClimbEnv(gym.Env):
             desired_hold_pos = self.targets[self.desired_stance[eff_index]].body.get_position()
             current_eff_pos = effector_positions[eff_index]
             distance = np.abs(np.linalg.norm(np.array(desired_hold_pos) - np.array(current_eff_pos)))
+            # todo: could use getClosestPoints instead to be surface-level accurate but this is faster
             dist_away[eff_index] = distance
         return dist_away
 
@@ -265,12 +269,6 @@ class HumanoidClimbEnv(gym.Env):
         obs.append(1 if self.is_touching_body(self.wall.id) else 0)
 
         return np.array(obs, dtype=np.float32)
-
-    def _get_info(self):
-        info = {
-            'is_success': self.current_stance == self.desired_stance
-        }
-        return info
 
     def is_on_floor(self):
         floor_contact = self._p.getContactPoints(bodyA=self.climber.robot, bodyB=self.floor.id)
