@@ -1,3 +1,5 @@
+from collections.abc import Iterable, Sized
+
 import gymnasium as gym
 import numpy as np
 import pybullet as p
@@ -22,7 +24,7 @@ class HumanoidClimbEnv(gym.Env):
 
         # 17 joint actions + no grasp actions
         self.action_space = gym.spaces.Box(-1, 1, (17,), np.float32)
-        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(306,), dtype=np.float32)
+        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(253,), dtype=np.float32)
 
         # configure pybullet GUI and load environment
         if self.render_mode == 'human':
@@ -236,39 +238,63 @@ class HumanoidClimbEnv(gym.Env):
             dist_away[eff_index] = distance
         return dist_away
 
-    def _get_obs(self):
-        obs = []
+    def visualise_climber_pos(self):
+        pos, orn = self._p.getBasePositionAndOrientation(self.climber.robot)
+        visual_shape = self._p.createVisualShape(p.GEOM_SPHERE, radius=0.2, rgbaColor=[1, 0, 0, 1])
+        body_id = self._p.createMultiBody(baseMass=0, baseVisualShapeIndex=visual_shape, basePosition=pos)
 
+    def _get_obs(self):
+        num_features = 17 * 13 + 4 * 8  # = 253
+        obs = np.empty(num_features, dtype=np.float32)
+        idx = 0
+
+        def add_to_obs(data):
+            nonlocal idx
+            _n = 1
+            if isinstance(data, Sized):
+                _n = len(data)
+            obs[idx:idx+_n] = data
+            idx += _n
+
+        # for each link (17):
+        # position and orientation relative to torso (base) = 3 + 4
+        # linear and angular velocity                       = 3 + 3 (euler?)
+        base_pos, base_orn = self._p.getBasePositionAndOrientation(self.climber.robot)
+        base_pos = np.asarray(base_pos)
         states = self._p.getLinkStates(self.climber.robot,
                                        linkIndices=[joint.jointIndex for joint in self.climber.ordered_joints],
                                        computeLinkVelocity=1)
-
-        # joint observations
         for state in states:
-            worldPos, worldOri, localInertialPos, _, _, _, linearVel, angVel = state
-            obs.extend(worldPos + worldOri + localInertialPos + linearVel + angVel)
+            world_pos, world_orn, _, _, _, _, linear_vel, ang_vel = state
+            relative_pos = world_pos - base_pos
+            relative_orn = self._p.getDifferenceQuaternion(world_orn, base_orn)
 
-        # Store position of each end-effector, and dist away from desired target
-        eff_positions = [eff.current_position() for eff in self.climber.effectors]
+            add_to_obs(relative_pos)
+            add_to_obs(relative_orn)
+            add_to_obs(linear_vel)
+            add_to_obs(ang_vel)
+
+        # for each limb (effector): - 8 x 4 = 32
+        # current xzy position of limb should already be contained in the above
+        # xyz position of target hold; vector to hold; distance to hold; whether limb is attached (1) or not (0)
+        eff_positions = [eff.current_position()-base_pos for eff in self.climber.effectors]
         for i, c_stance in enumerate(self.desired_stance):
             if c_stance == -1:
-                obs.extend([-1, -1, -1, 0]) # Dummy values for free limb
-                continue
+                # no target! just assume current position is fine instead of giving arbitrary values
+                eff_target = eff_positions[i]
+            else:
+                eff_target = self.targets[c_stance].body.initialPosition - base_pos
 
-            eff_target = self.targets[c_stance]
-            dist = np.linalg.norm(np.array(eff_target.body.initialPosition) - np.array(eff_positions[i]))
+            translation = eff_target - np.array(eff_positions[i])
+            dist = np.linalg.norm(translation)
+            attached = 0.0 if self.limbs_transitioning[i] else 1.0
 
-            obs.extend(eff_target.body.initialPosition)
-            obs.append(dist)
+            add_to_obs(eff_target)
+            add_to_obs(translation)
+            add_to_obs(dist)
+            add_to_obs(attached)
 
-        obs.extend(-1 if k == -1 else self.targets[k].id for k in self.current_stance)
-        obs.extend(-1 if k == -1 else self.targets[k].id for k in self.desired_stance)
-        obs.extend([1 if self.current_stance[i] == self.desired_stance[i] else 0 for i in range(len(self.current_stance))])
-        obs.extend(self.best_dist_to_stance)
-        obs.append(1 if self.is_touching_body(self.floor.id) else 0)
-        obs.append(1 if self.is_touching_body(self.wall.id) else 0)
-
-        return np.array(obs, dtype=np.float32)
+        return obs
 
     def is_on_floor(self):
         floor_contact = self._p.getContactPoints(bodyA=self.climber.robot, bodyB=self.floor.id)
