@@ -71,12 +71,12 @@ class Humanoid:
                 break
 
         if close_enough:
-            self.force_attach(eff_index=eff_index, target_key=hold, force=5000, attach_pos=effector.current_position())
+            self.force_attach(eff_index=eff_index, target_key=hold, attach_pos=effector.current_position())
             return True
 
         return False
 
-    def force_attach(self, eff_index, target_key, force=-1, attach_pos=None):
+    def force_attach(self, eff_index, target_key, force=5000, attach_pos=None):
         constraint = self.effector_constraints[eff_index]
         if constraint != -1:  # if already attached, de-attach
             self.detach(eff_index)
@@ -109,35 +109,20 @@ class Humanoid:
         for eff_index in range(len(self.effectors)):
             self.detach(eff_index)
 
-        # TODO: pose?
         self.robot_body.reset_pose(self.robot_body.initialPosition, self.robot_body.initialOrientation)
         for joint in self.joints:
             self.joints[joint].reset_position(0, 0)
 
-    def set_state(self, state):
+    def set_state(self, state, stance):
         pos = state[0:3]
         ori = state[3:7]
-        stance = state[-4:]
-        numJoints = self._p.getNumJoints(self.robot)
-        joints = [state[(i * 2) + 7:(i * 2) + 9] for i in range(numJoints)]
+        num_joints = self._p.getNumJoints(self.robot)
+        joints = [state[(i * 2) + 7:(i * 2) + 9] for i in range(num_joints)]
 
         self._p.resetBasePositionAndOrientation(self.robot, pos, ori)
-        for joint in range(numJoints):
+        for joint in range(num_joints):
             self._p.resetJointState(self.robot, joint, joints[joint][0], joints[joint][1])
 
         for i, eff in enumerate(self.effectors):
-            if stance[i] == -1: continue
-            target = self.targets[stance[i].astype(int)]
-            self.force_attach(eff_index=eff, target=target, force=1000, attach_pos=eff.current_position())
-
-    def initialise_from_state(self):
-        upper = len(self.state_file['arr_0'])
-        rand = random.randint(0, upper - 1)
-        state = self.state_file['arr_0'][rand]
-        self.set_state(state)
-
-
-def normalized(a, axis=-1, order=2):
-    l2 = np.atleast_1d(np.linalg.norm(a, order, axis))
-    l2[l2 == 0] = 1
-    return a / np.expand_dims(l2, axis)
+            if stance[i] != -1:
+                self.force_attach(eff_index=i, target_key=stance[i], attach_pos=eff.current_position())

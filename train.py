@@ -49,7 +49,8 @@ class CustomCallback(BaseCallback):
 
 def make_env(env_id: str, rank: int, config, seed: int = 0, max_steps: int = 1000) -> gym.Env:
 	def _init():
-		env = gym.make(env_id, config=config, render_mode=None, max_ep_steps=max_steps)
+		env = gym.make(env_id, config=config, render_mode=None, max_ep_steps=max_steps,
+			state_file='./humanoid_climb/states/state_10_9_2_1.npz')
 		m_env = Monitor(env)
 		m_env.reset(seed=seed + rank)
 		return m_env
@@ -58,7 +59,7 @@ def make_env(env_id: str, rank: int, config, seed: int = 0, max_steps: int = 100
 	return _init
 
 
-def train(env_name, sb3_algo, workers, n_steps, path_to_model=None):
+def train(env_name, sb3_algo, workers, n_steps, episode_steps, path_to_model=None):
 	config = {
 		"policy_type": "MlpPolicy",
 		"total_timesteps": n_steps,
@@ -72,8 +73,9 @@ def train(env_name, sb3_algo, workers, n_steps, path_to_model=None):
 		save_code=False,  # optional
 	)
 
-	climbing_config = ClimbingConfig('./configs/first_transition.json')
-	max_ep_steps = 600
+	climbing_config = ClimbingConfig('./configs/mid_transition.json')
+	# climbing_config = ClimbingConfig('./configs/first_transition.json')
+	max_ep_steps = episode_steps
 	# stances.set_root_path("./humanoid_climb")
 	# stance = stances.STANCE_14_1
 	vec_env = SubprocVecEnv([make_env(env_name, i, climbing_config, max_steps=max_ep_steps) for i in range(workers)], start_method="spawn")
@@ -164,16 +166,17 @@ if __name__ == '__main__':
 	parser.add_argument('-f', '--file', required=False, default=None)
 	parser.add_argument('-s', '--test', metavar='path_to_model')
 	parser.add_argument('-n', '--n_steps', type=int, default=int(50_000_000))
+	parser.add_argument('-e', '--episode_steps', type=int, default=int(200))
 
 	args = parser.parse_args()
 
 	if args.train:
 		if args.file is None:
 			print(f'<< Training from scratch! >>')
-			train(args.gymenv, args.sb3_algo, args.workers, args.n_steps)
+			train(args.gymenv, args.sb3_algo, args.workers, args.n_steps, args.episode_steps)
 		elif os.path.isfile(args.file):
 			print(f'<< Continuing {args.file} >>')
-			train(args.gymenv, args.sb3_algo, args.workers, args.n_steps, args.file)
+			train(args.gymenv, args.sb3_algo, args.workers, args.n_steps, args.episode_steps, args.file)
 
 	if args.test:
 		if os.path.isfile(args.test):

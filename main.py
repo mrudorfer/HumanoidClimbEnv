@@ -2,34 +2,43 @@ import os.path
 
 import gymnasium as gym
 import pybullet as p
+import numpy as np
 from stable_baselines3 import PPO
 from humanoid_climb.climbing_config import ClimbingConfig
 
 
 # load config, create and reset env, load policy
-config = ClimbingConfig('./configs/config.json')
+# config_file = './configs/config.json'
+config_file = './configs/mid_transition.json'
+# state_file = None
+state_file = './humanoid_climb/states/state_10_9_2_1.npz'
+config = ClimbingConfig(config_file)
 env = gym.make('HumanoidClimb-v0',
                render_mode='human',
                max_ep_steps=10000000,
-               config=config)
+               config=config,
+               state_file=state_file)
 obs, info = env.reset()
+
 policies = [
-    '1_10_9_n_n.zip',
-    '2_10_9_2_n.zip',
-    '3_10_9_2_1.zip',
-    '4_10_13_2_1.zip',
-    '5_10_13_2_5.zip',
-    '6_13_13_n_5.zip',
-    '7_13_13_6_5.zip',
-    '8_14_13_6_5.zip',
-    '9_14_17_6_5.zip',
-    '10_14_17_n_9.zip',
-    '11_14_17_10_9.zip',
-    '12_18_17_10_9.zip',
-    '13_18_20_10_9.zip',
-    '14_20_20_10_9.zip',
+    # '1_10_9_n_n.zip',
+    # '2_10_9_2_n.zip',
+    # '3_10_9_2_1.zip',
+    # '4_10_13_2_1.zip',
+    # '5_10_13_2_5.zip',
+    # '6_13_13_n_5.zip',
+    # '7_13_13_6_5.zip',
+    # '8_14_13_6_5.zip',
+    # '9_14_17_6_5.zip',
+    # '10_14_17_n_9.zip',
+    # '11_14_17_10_9.zip',
+    # '12_18_17_10_9.zip',
+    # '13_18_20_10_9.zip',
+    # '14_20_20_10_9.zip',
 ]
 policy_dir = './humanoid_climb/models/'
+policy_dir = './models/n6tmvih0/models/'
+policies = ['best_model.zip']
 model = PPO.load(os.path.join(policy_dir, policies[0]), env=env)
 policy_idx = 0
 

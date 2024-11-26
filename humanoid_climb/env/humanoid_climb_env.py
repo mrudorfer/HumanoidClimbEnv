@@ -14,7 +14,8 @@ from humanoid_climb.assets.asset import Asset
 class HumanoidClimbEnv(gym.Env):
     metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 60}
 
-    def __init__(self, config, render_mode: Optional[str] = None, max_ep_steps: Optional[int] = 602, state_file: Optional[str] = None):
+    def __init__(self, config, render_mode: Optional[str] = None, max_ep_steps: Optional[int] = 602,
+                 state_file: Optional[str] = None):
         # general configuration
         self.np_random, _ = gym.utils.seeding.np_random()
         self.config = config
@@ -24,7 +25,7 @@ class HumanoidClimbEnv(gym.Env):
 
         # 17 joint actions + no grasp actions
         self.action_space = gym.spaces.Box(-1, 1, (17,), np.float32)
-        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(253,), dtype=np.float32)
+        self.observation_space = gym.spaces.Box(low=-np.inf, high=np.inf, shape=(self._get_obs_dim(),), dtype=np.float32)
 
         # configure pybullet GUI and load environment
         if self.render_mode == 'human':
@@ -50,18 +51,18 @@ class HumanoidClimbEnv(gym.Env):
 
         # initialization of variables
         self.motion_path = [self.config.stance_path[stance]['desired_holds'] for stance in self.config.stance_path]
-        self.init_from_state = False if state_file is None else True
-        self.state_file = state_file
+        self.init_states = None
+        if state_file is not None:
+            self.init_states = np.load(state_file, allow_pickle=True)['arr_0']
         self.sim_steps_per_action = config.sim_steps_per_action
 
         self.steps = 0
-        self.current_stance = self.motion_path[0]
-        self.best_dist_to_stance = []
+        self.current_stance = []
         self.desired_stance = []
         self.limbs_transitioning = []
-
         self.desired_stance_index = 0
-        self.set_next_desired_stance()
+        self.grasp_status = []  # between 0 and 1, 1 meaning fully grasp and 0 is released.
+        self.grasp_actions = []  # -1 (release), 0 (stay as is), 1 (grasp)
 
 
     def step(self, action):
@@ -74,15 +75,20 @@ class HumanoidClimbEnv(gym.Env):
         self.steps += 1
 
         # connect climber to holds and update stance
-        self.perform_grasp_actions()
+        self.grasp_holds()
+        self.update_grasp_status(grasp_step=1.0, release_step=0.05)
         self.update_stance()
-        stance_reached = self.current_stance == self.desired_stance
-        goal_reached = self.current_stance == self.motion_path[-1]
 
-        # advance to next transition
+        # determine if next stance and overall goal are reached
+        grasp_actions_done = np.sum(self.grasp_actions) == 0
+        stance_reached = (self.current_stance == self.desired_stance) and grasp_actions_done
+        goal_reached = (self.current_stance == self.motion_path[-1]) and grasp_actions_done
+
+        # advance to next stance transition
         if stance_reached and not goal_reached:
             self.set_next_desired_stance()
-            self.release_holds()
+            # set action to -1 if plan to release that hold to transition
+            self.grasp_actions = -1 * np.array(np.bitwise_and(self.limbs_transitioning, self.current_stance != -1))
 
         ob = self._get_obs()
         info = {
@@ -92,6 +98,8 @@ class HumanoidClimbEnv(gym.Env):
 
         # reward = self.calculate_reward_eq1()
         reward = self.calculate_reward_negative_distance()
+        if goal_reached:
+            reward += 1000
 
         terminate = goal_reached or (self.is_on_floor())
         truncate = self.steps >= self.max_ep_steps
@@ -100,12 +108,25 @@ class HumanoidClimbEnv(gym.Env):
 
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
+        self.np_random, _ = gym.utils.seeding.np_random(seed)
 
-        self.climber.reset()
         self.steps = 0
         self.current_stance = self.motion_path[0]
+
+        self.climber.reset()
+        if self.init_states is not None:
+            idx = self.np_random.choice(len(self.init_states))
+            self.climber.set_state(self.init_states[idx], self.current_stance)
+
         self.desired_stance_index = 0
         self.set_next_desired_stance()
+        # set grasp status to 1 if a hold is grasped; set action to -1 if plan to release that hold to transition
+        self.grasp_status = np.array([1.0 if c != -1 else 0.0 for c in self.current_stance])
+        self.grasp_actions = -1 * np.array(np.bitwise_and(self.limbs_transitioning, self.current_stance != -1))
+        # release actions are only valid if we are actually on a hold currently
+        for i in range(len(self.current_stance)):
+            if self.current_stance == -1:
+                self.grasp_actions[i] = 0
 
         ob = self._get_obs()
         info = {
@@ -123,53 +144,12 @@ class HumanoidClimbEnv(gym.Env):
     def calculate_reward_negative_distance(self):
         current_dist_away = self.get_distance_from_desired_stance()
 
-        is_closer = 1 if np.sum(current_dist_away) < np.sum(self.best_dist_to_stance) else 0
-        if is_closer: self.best_dist_to_stance = current_dist_away.copy()
-
         reward = np.clip(-1 * np.sum(current_dist_away), -2, float('inf'))
         # reward += 1000 if self.current_stance == self.desired_stance else 0
 
         if self.is_on_floor():
             # episode will be terminated, i.e., put maximum punishment for all remaining steps
             reward += (self.max_ep_steps - self.steps) * -2
-
-        return reward
-
-    def calculate_reward_eq1(self):
-        # Tuning params
-        kappa = 0.6
-        sigma = 0.5
-
-        # Summation of distance away from hold
-        sum_values = [0, 0, 0, 0]
-        current_dist_away = self.get_distance_from_desired_stance()
-        for i, effector in enumerate(self.climber.effectors):
-            distance = current_dist_away[i]
-            reached = 1 if self.current_stance[i] == self.desired_stance[i] else 0
-            sum_values[i] = kappa * np.exp(-1 * sigma * distance) + reached
-
-        # I(d_t), is the stance closer than ever
-        is_closer = True
-        difference_closer = 0
-
-        # compare sum of values instead of individual values
-        if np.sum(current_dist_away) > np.sum(self.best_dist_to_stance):
-            is_closer = False
-            difference_closer = np.sum(self.best_dist_to_stance) - np.sum(current_dist_away)
-
-        if is_closer:
-            # self.best_dist_to_stance = current_dist_away.copy()
-            for i, best_dist_away in enumerate(self.best_dist_to_stance):
-                if current_dist_away[i] < best_dist_away:
-                    self.best_dist_to_stance[i] = current_dist_away[i]
-
-        # positive reward if closer, otherwise small penalty based on difference away
-        reward = is_closer * np.sum(sum_values) + 0.8 * difference_closer
-        reward += 3000 if self.current_stance == self.desired_stance else 0
-        if self.is_on_floor():
-            reward = -3000
-
-        self.visualise_reward(reward, -2, 2)
 
         return reward
 
@@ -180,9 +160,6 @@ class HumanoidClimbEnv(gym.Env):
 
         # check which limbs are transitioning
         self.limbs_transitioning = [hold1 != hold2 for hold1, hold2 in zip(self.desired_stance, self.current_stance)]
-
-        # reset best_dist
-        self.best_dist_to_stance = self.get_distance_from_desired_stance()
 
         # update visualisation
         if self.render_mode == 'human':
@@ -198,20 +175,38 @@ class HumanoidClimbEnv(gym.Env):
                 self._p.changeVisualShape(objectUniqueId=self.targets[key].id, linkIndex=-1,
                                           rgbaColor=[0.0, 0.7, 0.1, 0.75])
 
-    def perform_grasp_actions(self):
+    def grasp_holds(self):
         for i, (transitioning, target) in enumerate(zip(self.limbs_transitioning, self.desired_stance)):
-            if transitioning:
+            if transitioning and target != -1:
                 attached = self.climber.attempt_attach_eff_to_hold(i, target)
                 if attached:
                     self.limbs_transitioning[i] = False
+                    self.grasp_actions[i] = 1
 
-    def release_holds(self):
-        for i, transitioning in enumerate(self.limbs_transitioning):
-            if transitioning:
-                self.climber.detach(i)
+    def update_grasp_status(self, release_step = 0.2, grasp_step = 1.0):
+        # steps need to be 0 < step <= 1.0
+        # the smaller the value, the more gradually holds are being grasped/released (takes more timesteps)
+        # if the value is 1.0, holds are grasped/released immediately.
+
+        # apply grasp action
+        for i, action in enumerate(self.grasp_actions):
+            if action == 1:
+                # hold is already attached, just need to complete the action (i.e. waiting some timesteps)
+                self.grasp_status[i] = self.grasp_status[i] + grasp_step
+                if self.grasp_status[i] >= 1.0:
+                    self.grasp_status[i] = 1.0
+                    self.grasp_actions[i] = 0
+            if action == -1:
+                # need to wait until action completed to actually detach from the hold
+                self.grasp_status[i] = self.grasp_status[i] - release_step
+                if self.grasp_status[i] <= 0.0:
+                    self.grasp_status[i] = 0.0
+                    self.grasp_actions[i] = 0
+                    self.climber.detach(i)
 
     def update_stance(self):
         self.current_stance = self.climber.effector_attached_to
+        self.limbs_transitioning = [hold1 != hold2 for hold1, hold2 in zip(self.desired_stance, self.current_stance)]
 
         if self.render_mode == 'human':
             torso_pos = self.climber.robot_body.current_position()
@@ -238,14 +233,32 @@ class HumanoidClimbEnv(gym.Env):
             dist_away[eff_index] = distance
         return dist_away
 
+    def get_stance_center(self, stance):
+        """
+        Determines the xyz center of a stance as average of all holds. Free limbs are ignored.
+        :param stance: list of hold keys
+        :returns: ndarray(3,), xyz center position
+        """
+        hold_positions = []
+        for key in stance:
+            if key != -1:
+                pos = self.targets[key].body.initialPosition
+                # pos, _ = self._p.getBasePositionAndOrientation(self.targets[key].id)
+                hold_positions.append(pos)
+        center = np.asarray(hold_positions).mean(axis=0)
+        return center
+
     def visualise_climber_pos(self):
         pos, orn = self._p.getBasePositionAndOrientation(self.climber.robot)
         visual_shape = self._p.createVisualShape(p.GEOM_SPHERE, radius=0.2, rgbaColor=[1, 0, 0, 1])
         body_id = self._p.createMultiBody(baseMass=0, baseVisualShapeIndex=visual_shape, basePosition=pos)
 
+    def _get_obs_dim(self):
+        return 7 + 17 * 13 + 4 * 9  # = 271
+
     def _get_obs(self):
-        num_features = 17 * 13 + 4 * 8  # = 253
-        obs = np.empty(num_features, dtype=np.float32)
+        # variant that translates all values wrt to a stance center
+        obs = np.empty(self._get_obs_dim(), dtype=np.float32)
         idx = 0
 
         def add_to_obs(data):
@@ -256,27 +269,32 @@ class HumanoidClimbEnv(gym.Env):
             obs[idx:idx+_n] = data
             idx += _n
 
+        # we compute a stance center and all positions will be expressed relative to that
+        base_pos = self.get_stance_center(self.desired_stance)
+        trunk_pos, trunk_orn = self._p.getBasePositionAndOrientation(self.climber.robot)
+        trunk_pos = np.asarray(trunk_pos) - base_pos
+        add_to_obs(trunk_pos)
+        add_to_obs(trunk_orn)
+
         # for each link (17):
         # position and orientation relative to torso (base) = 3 + 4
         # linear and angular velocity                       = 3 + 3 (euler?)
-        base_pos, base_orn = self._p.getBasePositionAndOrientation(self.climber.robot)
-        base_pos = np.asarray(base_pos)
         states = self._p.getLinkStates(self.climber.robot,
                                        linkIndices=[joint.jointIndex for joint in self.climber.ordered_joints],
                                        computeLinkVelocity=1)
-        for state in states:
+        for s, state in enumerate(states):
             world_pos, world_orn, _, _, _, _, linear_vel, ang_vel = state
             relative_pos = world_pos - base_pos
-            relative_orn = self._p.getDifferenceQuaternion(world_orn, base_orn)
+            # relative_orn = self._p.getDifferenceQuaternion(world_orn, base_orn)
 
             add_to_obs(relative_pos)
-            add_to_obs(relative_orn)
+            add_to_obs(world_orn)
             add_to_obs(linear_vel)
             add_to_obs(ang_vel)
 
-        # for each limb (effector): - 8 x 4 = 32
+        # for each limb (effector): - 9 x 4 = 36
         # current xzy position of limb should already be contained in the above
-        # xyz position of target hold; vector to hold; distance to hold; whether limb is attached (1) or not (0)
+        # xyz position of target hold; vector to hold; distance to hold; grasp action and grasp status
         eff_positions = [eff.current_position()-base_pos for eff in self.climber.effectors]
         for i, c_stance in enumerate(self.desired_stance):
             if c_stance == -1:
@@ -287,13 +305,14 @@ class HumanoidClimbEnv(gym.Env):
 
             translation = eff_target - np.array(eff_positions[i])
             dist = np.linalg.norm(translation)
-            attached = 0.0 if self.limbs_transitioning[i] else 1.0
 
             add_to_obs(eff_target)
             add_to_obs(translation)
             add_to_obs(dist)
-            add_to_obs(attached)
+            add_to_obs(self.grasp_actions[i])
+            add_to_obs(self.grasp_status[i])
 
+        assert idx == self._get_obs_dim(), f'did not fill observation space. idx: {idx}. dim: {self._get_obs_dim()}'
         return obs
 
     def is_on_floor(self):
@@ -305,10 +324,6 @@ class HumanoidClimbEnv(gym.Env):
                 return True
 
         return False
-
-    def is_touching_body(self, bodyB):
-        contact_points = self._p.getContactPoints(bodyA=self.climber.robot, bodyB=bodyB)
-        return len(contact_points) > 0
 
     def seed(self, seed=None):
         self.np_random, seed = gym.utils.seeding.np_random(seed)
