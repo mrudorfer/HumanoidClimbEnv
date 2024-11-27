@@ -142,14 +142,23 @@ class HumanoidClimbEnv(gym.Env):
         return np.array(ob, dtype=np.float32), info
 
     def calculate_reward_negative_distance(self):
-        current_dist_away = self.get_distance_from_desired_stance()
+        distances = [0.0]
+        eff_positions = [eff.current_position() for eff in self.climber.effectors]
+        for i, c_stance in enumerate(self.desired_stance):
+            if c_stance == -1:
+                # no target! current position is fine
+                pass
+            else:
+                # get distance to target
+                eff_target = self.targets[c_stance].body.initialPosition
+                distances.append(np.linalg.norm(eff_target - np.array(eff_positions[i])))
 
-        reward = np.clip(-1 * np.sum(current_dist_away), -2, float('inf'))
+        reward = np.clip(-1.0 * np.sum(distances), -2.0, float('inf'))
         # reward += 1000 if self.current_stance == self.desired_stance else 0
 
         if self.is_on_floor():
             # episode will be terminated, i.e., put maximum punishment for all remaining steps
-            reward += (self.max_ep_steps - self.steps) * -2
+            reward += (self.max_ep_steps - self.steps) * -2.0
 
         return reward
 
@@ -215,23 +224,6 @@ class HumanoidClimbEnv(gym.Env):
             self.debug_stance_text = self._p.addUserDebugText(text=f"{self.current_stance}", textPosition=torso_pos,
                                                               textSize=1, lifeTime=0.1, textColorRGB=[1.0, 0.0, 1.0],
                                                               replaceItemUniqueId=self.debug_stance_text)
-
-    def get_distance_from_desired_stance(self):
-        effector_count = len(self.climber.effectors)
-        dist_away = [float('inf') for _ in range(effector_count)]
-        effector_positions = [effector.get_position() for effector in self.climber.effectors]
-
-        for eff_index in range(effector_count):
-            if self.desired_stance[eff_index] == -1:
-                dist_away[eff_index] = 0
-                continue
-
-            desired_hold_pos = self.targets[self.desired_stance[eff_index]].body.get_position()
-            current_eff_pos = effector_positions[eff_index]
-            distance = np.abs(np.linalg.norm(np.array(desired_hold_pos) - np.array(current_eff_pos)))
-            # todo: could use getClosestPoints instead to be surface-level accurate but this is faster
-            dist_away[eff_index] = distance
-        return dist_away
 
     def get_stance_center(self, stance):
         """
@@ -335,3 +327,6 @@ class HumanoidClimbEnv(gym.Env):
         normalized_value = (value - min) / (max - min) * (1 - 0) + 0
         colour = [0.0, normalized_value / 1.0, 0.0, 1.0] if reward > 0.0 else [normalized_value / 1.0, 0.0, 0.0, 1.0]
         self._p.changeVisualShape(objectUniqueId=self.climber.robot, linkIndex=-1, rgbaColor=colour)
+
+    def close(self):
+        self._p.disconnect()
