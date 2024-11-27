@@ -88,7 +88,10 @@ def train(env_name, sb3_algo, workers, n_steps, episode_steps, path_to_model=Non
 
 	if sb3_algo == 'PPO':
 		if path_to_model is None:
-			model = sb.PPO('MlpPolicy', vec_env, verbose=1, device='cuda', tensorboard_log=log_dir)
+			policy_kwargs = dict(net_arch=[256, 256, 256])
+			model = sb.PPO('MlpPolicy', vec_env, verbose=1, device='cuda', tensorboard_log=log_dir,
+						   batch_size=2048, n_epochs=5, ent_coef=0.005, gamma=0.995, clip_range=0.2,
+						   n_steps=2048, learning_rate=0.0003, policy_kwargs=policy_kwargs)
 		else:
 			model = sb.PPO.load(path_to_model, env=vec_env)
 	elif sb3_algo == 'SAC':
