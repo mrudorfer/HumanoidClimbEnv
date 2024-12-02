@@ -1,15 +1,14 @@
 import time
+from datetime import timedelta
+
 import gymnasium as gym
-import numpy as np
-from gymnasium.wrappers import FlattenObservation
 import pybullet as p
 import stable_baselines3 as sb
 import os
 import argparse
 
-from stable_baselines3.common.callbacks import EvalCallback, BaseCallback
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecVideoRecorder, VecFrameStack
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecVideoRecorder, VecFrameStack, VecNormalize
 from stable_baselines3.common.utils import set_random_seed
 from stable_baselines3.common.callbacks import EvalCallback
 
@@ -17,34 +16,13 @@ import wandb
 from wandb.integration.sb3 import WandbCallback
 import humanoid_climb.stances as stances
 from humanoid_climb.climbing_config import ClimbingConfig
+from callbacks import CustomCallback, CustomEvalCallback
 
 # Create directories to hold models and logs
 model_dir = "models"
 log_dir = "logs"
 os.makedirs(model_dir, exist_ok=True)
 os.makedirs(log_dir, exist_ok=True)
-
-
-class CustomCallback(BaseCallback):
-	def __init__(self, verbose: int = 0):
-		super().__init__(verbose)
-		self.rollout_count = 0
-
-	def _on_step(self) -> bool:
-		return True
-
-	def _on_rollout_end(self) -> None:
-		self.rollout_count += 1
-		_steps_till_success = []
-		_success = []
-
-		# for entry in self.model.ep_info_buffer:
-		# 	_success.append(entry['is_success'])
-		#
-		# success_rate = np.mean(_success) if len(_success) > 0 else None
-		#
-		# self.logger.record("climb/success_rate", success_rate)
-		self.logger.record("climb/rollout_count", self.rollout_count)
 
 
 def make_env(env_id: str, rank: int, config, seed: int = 0, max_steps: int = 1000) -> gym.Env:
@@ -76,21 +54,22 @@ def train(env_name, sb3_algo, workers, n_steps, episode_steps, path_to_model=Non
 	climbing_config = ClimbingConfig('./configs/mid_transition.json')
 	# climbing_config = ClimbingConfig('./configs/first_transition.json')
 	max_ep_steps = episode_steps
-	# stances.set_root_path("./humanoid_climb")
-	# stance = stances.STANCE_14_1
+	gamma = 0.995
 	vec_env = SubprocVecEnv([make_env(env_name, i, climbing_config, max_steps=max_ep_steps) for i in range(workers)], start_method="spawn")
+	vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0, gamma=gamma)
 
 	model = None
 	save_path = f"{model_dir}/{run.id}"
 
-	eval_callback = EvalCallback(vec_env, best_model_save_path=f"{save_path}/models/", log_path=f"{save_path}/logs/", eval_freq=500, deterministic=True, render=False)
+	eval_callback = CustomEvalCallback(vec_env, best_model_save_path=f"{save_path}/models/", log_path=f"{save_path}/logs/",
+									   eval_freq=500, deterministic=True, render=False)
 	cust_callback = CustomCallback()
 
 	if sb3_algo == 'PPO':
 		if path_to_model is None:
 			policy_kwargs = dict(net_arch=[256, 256, 256])
 			model = sb.PPO('MlpPolicy', vec_env, verbose=1, device='cuda', tensorboard_log=log_dir,
-						   batch_size=2048, n_epochs=5, ent_coef=0.005, gamma=0.995, clip_range=0.2,
+						   batch_size=2048, n_epochs=5, ent_coef=0.005, gamma=gamma, clip_range=0.2,
 						   n_steps=2048, learning_rate=0.0003, policy_kwargs=policy_kwargs)
 		else:
 			model = sb.PPO.load(path_to_model, env=vec_env)
@@ -173,6 +152,8 @@ if __name__ == '__main__':
 
 	args = parser.parse_args()
 
+	start_time = time.time()
+
 	if args.train:
 		if args.file is None:
 			print(f'<< Training from scratch! >>')
@@ -191,3 +172,6 @@ if __name__ == '__main__':
 			test(env, args.sb3_algo, path_to_model=args.test)
 		else:
 			print(f'{args.test} not found.')
+
+	duration = timedelta(seconds=time.time() - start_time)
+	print(f'Completed the process. Duration: {duration}')
