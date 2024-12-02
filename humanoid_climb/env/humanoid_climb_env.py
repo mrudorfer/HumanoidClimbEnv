@@ -41,6 +41,7 @@ class HumanoidClimbEnv(gym.Env):
         self.floor = Asset(self._p, self.config.plane)
         self.wall = Asset(self._p, self.config.surface)
         self.climber = Humanoid(self._p, self.config.climber)
+
         self.targets = dict()
         for key in self.config.holds:
             self.targets[key] = Asset(self._p, self.config.holds[key])
@@ -246,7 +247,7 @@ class HumanoidClimbEnv(gym.Env):
         body_id = self._p.createMultiBody(baseMass=0, baseVisualShapeIndex=visual_shape, basePosition=pos)
 
     def _get_obs_dim(self):
-        return 7 + 17 * 13 + 4 * 9  # = 271
+        return 7 + 17 * 2 + 17 * 13 + 4 * 9  # = 271
 
     def _get_obs(self):
         # variant that translates all values wrt to a stance center
@@ -267,6 +268,10 @@ class HumanoidClimbEnv(gym.Env):
         trunk_pos = np.asarray(trunk_pos) - base_pos
         add_to_obs(trunk_pos)
         add_to_obs(trunk_orn)
+
+        # add joint angles
+        for joint_name, joint in self.climber.joints.items():
+            add_to_obs(joint.get_state())  # pos and vel
 
         # for each link (17):
         # position and orientation relative to torso (base) = 3 + 4
