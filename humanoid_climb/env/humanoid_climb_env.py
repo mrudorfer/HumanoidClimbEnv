@@ -9,13 +9,13 @@ from typing import Optional
 from pybullet_utils.bullet_client import BulletClient
 from humanoid_climb.assets.humanoid import Humanoid
 from humanoid_climb.assets.asset import Asset
+from humanoid_climb.climbing_config import ClimbingConfig
 
 
 class HumanoidClimbEnv(gym.Env):
     metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 60}
 
-    def __init__(self, config, render_mode: Optional[str] = None, max_ep_steps: Optional[int] = 602,
-                 state_file: Optional[str] = None):
+    def __init__(self, config: ClimbingConfig, render_mode: Optional[str] = None, max_ep_steps: Optional[int] = 200):
         # general configuration
         self.np_random, _ = gym.utils.seeding.np_random()
         self.config = config
@@ -37,25 +37,29 @@ class HumanoidClimbEnv(gym.Env):
 
         self._p.setAdditionalSearchPath(pybullet_data.getDataPath())
         self._p.setGravity(0, 0, -9.8)
-        self.floor = self._p.loadURDF("plane.urdf")
         self.floor = Asset(self._p, self.config.plane)
         self.wall = Asset(self._p, self.config.surface)
         self.climber = Humanoid(self._p, self.config.climber)
 
-        self.targets = dict()
-        for key in self.config.holds:
-            self.targets[key] = Asset(self._p, self.config.holds[key])
-            self._p.addUserDebugText(text=key, textPosition=self.targets[key].body.initialPosition, textSize=0.7, lifeTime=0.0, textColorRGB=[0.0, 0.0, 1.0])
-        self.climber.targets = self.targets
+        self.targets = None
+        if self.config.hold_definition == ClimbingConfig.HOLDS_PREDEFINED:
+            self.targets = dict()
+            for key in self.config.holds:
+                self.targets[key] = Asset(self._p, self.config.holds[key])
+                self._p.addUserDebugText(text=key, textPosition=self.targets[key].body.initialPosition, textSize=0.7, lifeTime=0.0, textColorRGB=[0.0, 0.0, 1.0])
+            self.climber.targets = self.targets
 
         self.debug_stance_text = self._p.addUserDebugText(text=f"", textPosition=[0, 0, 0], textSize=1, lifeTime=0.1, textColorRGB=[1.0, 0.0, 1.0])
 
         # initialization of variables
-        self.motion_path = [self.config.stance_path[stance]['desired_holds'] for stance in self.config.stance_path]
+        self.motion_path = None
+        if self.config.transition_definition == ClimbingConfig.TRANSITIONS_PREDEFINED:
+            self.motion_path = [self.config.stance_path[stance]['desired_holds'] for stance in self.config.stance_path]
+
         self.init_states = None
-        if state_file is not None:
-            self.init_states = np.load(state_file, allow_pickle=True)['arr_0']
-        self.sim_steps_per_action = config.sim_steps_per_action
+        if self.config.init_states_fn is not None:
+            self.init_states = np.load(self.config.init_states_fn, allow_pickle=True)['arr_0']
+        self.sim_steps_per_action = self.config.sim_steps_per_action
 
         self.steps = 0
         self.current_stance = []
@@ -112,7 +116,8 @@ class HumanoidClimbEnv(gym.Env):
         self.np_random, _ = gym.utils.seeding.np_random(seed)
 
         self.steps = 0
-        self.current_stance = self.motion_path[0]
+        if self.motion_path is not None:
+            self.current_stance = self.motion_path[0]
 
         self.climber.reset()
         if self.init_states is not None:

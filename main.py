@@ -4,21 +4,15 @@ import gymnasium as gym
 import pybullet as p
 import numpy as np
 from stable_baselines3 import PPO
+from stable_baselines3.common.vec_env import VecNormalize, DummyVecEnv
+from stable_baselines3.common.env_util import make_vec_env
 from humanoid_climb.climbing_config import ClimbingConfig
 
 
 # load config, create and reset env, load policy
 # config_file = './configs/config.json'
-config_file = './configs/mid_transition.json'
-# state_file = None
-state_file = './humanoid_climb/states/state_10_9_2_1.npz'
-config = ClimbingConfig(config_file)
-env = gym.make('HumanoidClimb-v0',
-               render_mode='human',
-               max_ep_steps=10000000,
-               config=config,
-               state_file=state_file)
-obs, info = env.reset()
+sim_config_fn = './configs/sim_config.json'
+climb_config_fn = './configs/simple_train_config.json'
 
 policies = [
     # '1_10_9_n_n.zip',
@@ -37,15 +31,34 @@ policies = [
     # '14_20_20_10_9.zip',
 ]
 policy_dir = './humanoid_climb/models/'
-policy_dir = './models/n6tmvih0/models/'
+policy_dir = './models/dzhmk5gh/models/'
 policies = ['best_model.zip']
-model = PPO.load(os.path.join(policy_dir, policies[0]), env=env)
+stats_path = os.path.join(policy_dir, 'vecnormalize.pkl')
+
+config = ClimbingConfig(sim_config_fn, climb_config_fn)
+
+env_kwargs = {
+    'render_mode': 'human',
+    'max_ep_steps': 10_000_000,
+    'config': config
+}
+
+vec_env = make_vec_env('HumanoidClimb-v0', n_envs=1, env_kwargs=env_kwargs)
+vec_env = VecNormalize.load(stats_path, vec_env)
+#  do not update them at test time, also don't need to normalize rewards
+vec_env.training = False
+vec_env.norm_reward = False
+obs = vec_env.reset()
+
+model = PPO.load(os.path.join(policy_dir, policies[0]), env=vec_env)
+print(model.policy)
 policy_idx = 0
 
 # prepare variables for the while loop
-terminated, truncated = False, False
+done, terminated, truncated = False, False, False
 score, step = 0, 0
 paused = False
+info = {}
 
 print('In PyBullet window, press:')
 print('\tr          reset episode')
@@ -56,7 +69,9 @@ while True:
     if not paused:
         # use policy to predict next action, then step environment
         action, _states = model.predict(obs, deterministic=True)
-        obs, reward, terminated, truncated, info = env.step(action)
+        obs, reward, done, info = vec_env.step(action)
+        # extract from vec_env
+        reward, done, info = reward[0], done[0], info[0]
         score += reward
         step += 1
 
@@ -65,14 +80,14 @@ while True:
 
     # if episode terminates, pause (user needs to reset)
     # note that episode currently does not terminate after goal has successfully been reached
-    if (terminated or truncated) and not paused:
+    if done and not paused:
         print(f'terminated after {step} steps. score: {score}')
         paused = True
 
     if step > 1 and not paused and info['stance_reached']:
         policy_idx += 1
         print(f'stance reached after {step} steps!! activating policy {policies[policy_idx][:-4]}.')
-        model = PPO.load(os.path.join(policy_dir, policies[policy_idx]), env=env)
+        model = PPO.load(os.path.join(policy_dir, policies[policy_idx]), env=vec_env)
 
     # get keys
     keys = p.getKeyboardEvents()
@@ -86,8 +101,8 @@ while True:
         score = 0
         step = 0
         policy_idx = 0
-        model = PPO.load(os.path.join(policy_dir, policies[policy_idx]), env=env)
-        obs, info = env.reset()
+        model = PPO.load(os.path.join(policy_dir, policies[policy_idx]), env=vec_env)
+        obs = vec_env.reset()
 
     # pause on space
     pause_key = ord(' ')
@@ -101,4 +116,4 @@ while True:
         print('quitting...')
         break
 
-env.close()
+vec_env.close()

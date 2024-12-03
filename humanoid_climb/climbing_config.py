@@ -3,25 +3,44 @@ from pathlib import Path
 
 
 class ClimbingConfig:
+    HOLDS_PREDEFINED = 'predefined'
 
-    def __init__(self, path_to_config):
+    TRANSITIONS_PREDEFINED = 'predefined'
 
-        self.data = []
+    def __init__(self, sim_config_path, climb_config_path):
 
-        with open(path_to_config) as f:
-            self.data = json.load(f)
+        sim_config = None
+        climb_config = None
 
-        self.assets = self.data["assets"]
-        self.sim_steps_per_action = self.data["sim_steps_per_action"]
-        self.holds = self.data["holds"]
-        self.stance_path = self.data["stance_path"]
-        self.climber = self.data["climber"]
-        self.surface = self.data["surface"]
-        self.plane = self.data["ground_plane"]
+        # read general sim config
+        with open(sim_config_path) as f:
+            sim_config = json.load(f)
 
-        for key in self.holds:
-            self.holds[key]['asset_data'] = self.assets[self.holds[key]['asset']]
-
+        self.assets = sim_config['assets']
+        self.sim_steps_per_action = sim_config['sim_steps_per_action']
+        self.climber = sim_config['climber']
+        self.surface = sim_config['surface']
         self.surface['asset_data'] = self.assets[self.surface['asset']]
+        self.plane = sim_config['ground_plane']
         self.plane['asset_data'] = self.assets[self.plane['asset']]
+
+        # check if climb config given (i.e. hold configuration and stance path)
+        with open(climb_config_path) as f:
+            climb_config = json.load(f)
+
+        self.hold_definition = climb_config['hold_definition']
+        if self.hold_definition == self.HOLDS_PREDEFINED:
+            self.holds = climb_config['holds']
+            for key in self.holds:
+                self.holds[key]['asset_data'] = self.assets[self.holds[key]['asset']]
+        else:
+            self.holds = []
+
+        self.transition_definition = climb_config['transition_definition']
+        if self.transition_definition == self.TRANSITIONS_PREDEFINED:
+            self.stance_path = climb_config['stance_path']
+
+        self.init_states_fn = None
+        if 'init_states_fn' in climb_config.keys():
+            self.init_states_fn = climb_config['init_states_fn']
 

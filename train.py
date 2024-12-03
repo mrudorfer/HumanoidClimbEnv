@@ -27,8 +27,7 @@ os.makedirs(log_dir, exist_ok=True)
 
 def make_env(env_id: str, rank: int, config, seed: int = 0, max_steps: int = 1000) -> gym.Env:
 	def _init():
-		env = gym.make(env_id, config=config, render_mode=None, max_ep_steps=max_steps,
-			state_file='./humanoid_climb/states/state_10_9_2_1.npz')
+		env = gym.make(env_id, config=config, render_mode=None, max_ep_steps=max_steps)
 		m_env = Monitor(env)
 		m_env.reset(seed=seed + rank)
 		return m_env
