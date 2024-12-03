@@ -1,94 +1,5 @@
 {
-  "sim_steps_per_action": 1,
-
-  "assets": {
-    "asset_climber_robot": {
-      "path": "./humanoid_climb/assets/humanoid_symmetric.xml",
-      "type": "URDF"
-    },
-    "asset_hold": {
-      "path": "./humanoid_climb/assets/target.xml",
-      "type": "URDF"
-    },
-
-    "climbing_wall": {
-      "path": "./humanoid_climb/assets/wall.xml",
-      "type": "URDF"
-    },
-
-    "ground_plane": {
-      "path": "plane.urdf",
-      "type": "URDF"
-    }
-  },
-
-  "climber": {
-    "asset": "asset_climber_robot",
-    "scale": 1,
-    "power": 0.48,
-    "position": [0, 0, 1.175],
-    "orientation": [0, 0, 0, 1],
-    "end_effectors": ["left_hand", "right_hand", "left_foot", "right_foot"],
-    "joint_forces": {
-      "abdomen_z": 100,
-      "abdomen_y": 100,
-      "abdomen_x": 100,
-
-      "right_hip_x": 100,
-      "right_hip_z": 100,
-      "right_hip_y": 300,
-      "right_knee": 200,
-
-      "left_hip_x": 100,
-      "left_hip_z": 100,
-      "left_hip_y": 300,
-      "left_knee": 200,
-
-      "right_shoulder1": 75,
-      "right_shoulder2": 75,
-      "right_elbow": 75,
-
-      "left_shoulder1": 75,
-      "left_shoulder2": 75,
-      "left_elbow": 75
-    },
-    "collision_groups": {
-      "lwaist": [2, 0],
-      "pelvis": [2, 0],
-
-      "left_thigh": [4, 56],
-      "left_shin": [4, 56],
-      "left_foot": [4, 56],
-
-      "left_upper_arm": [8, 54],
-      "left_lower_arm": [8, 54],
-      "left_hand": [8, 54],
-
-      "right_thigh": [16, 44],
-      "right_shin": [16, 44],
-      "right_foot": [16, 44],
-
-      "right_upper_arm": [32, 30],
-      "right_lower_arm": [32, 30],
-      "right_hand": [32, 30]
-    },
-    "starting_pose": {
-      "left_elbow": 90
-    }
-  },
-
-  "ground_plane": {
-    "asset": "ground_plane",
-    "position": [0, 0, 0],
-    "orientation": [0, 0, 0, 1]
-  },
-
-  "surface": {
-    "asset": "climbing_wall",
-    "position": [0.48, 0, 2],
-    "orientation": [0, 0, 0, 1]
-  },
-
+  "hold_definition": "predefined",
   "holds": {
     "hold_0": {
       "asset": "asset_hold",
@@ -132,7 +43,7 @@
     },
     "hold_8": {
       "asset": "asset_hold",
-      "position": [0.4, -0.9, 1.75],
+      "position": [0.4, -0.7, 1.9],
       "orientation": [0, 0, 0, 1]
     },
     "hold_9": {
@@ -197,17 +108,13 @@
     }
   },
 
+  "transition_definition": "predefined",
   "stance_path": {
     "0": {
-      "desired_holds": [-1, -1, -1, -1],
-      "force_attach": [null, null, null, null],
-      "ignore_holds": [[], [], [], []]
+      "desired_holds": [-1, -1, -1, -1]
     },
     "1": {
-      "desired_holds": ["hold_10", "hold_9", -1, -1],
-      "force_attach": [null, null, null, null],
-      "ignore_holds": [[], [], [], []]
+      "desired_holds": ["hold_10", "hold_9", -1, -1]
     }
   }
-
 }
