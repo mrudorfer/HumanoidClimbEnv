@@ -6,6 +6,8 @@ import pybullet as p
 import pybullet_data
 
 from typing import Optional
+
+from jumpy.numpy import float32
 from pybullet_utils.bullet_client import BulletClient
 from humanoid_climb.assets.humanoid import Humanoid
 from humanoid_climb.assets.asset import Asset
@@ -58,7 +60,7 @@ class HumanoidClimbEnv(gym.Env):
 
         self.init_states = None
         if self.config.init_states_fn is not None:
-            self.init_states = np.load(self.config.init_states_fn, allow_pickle=True)['arr_0']
+            self.init_states = dict(np.load(self.config.init_states_fn))
         self.sim_steps_per_action = self.config.sim_steps_per_action
 
         self.steps = 0
@@ -121,8 +123,18 @@ class HumanoidClimbEnv(gym.Env):
 
         self.climber.reset()
         if self.init_states is not None:
-            idx = self.np_random.choice(len(self.init_states))
-            self.climber.set_state(self.init_states[idx], self.current_stance)
+            idx = self.np_random.choice(len(self.init_states['states']))
+            self.climber.set_state(self.init_states['states'][idx], self.current_stance)
+
+        # print('temporary code execution')
+        # stance_data = np.zeros(shape=(len(self.init_states), 4, 3), dtype=np.float32)
+        # state_data = np.zeros(shape=(len(self.init_states), 69), dtype=np.float32)
+        # for i in range(4):
+        #     stance_data[:, i] = self.targets[self.current_stance[i]].body.initialPosition
+        # for i, state in enumerate(self.init_states):
+        #     state_data[i] = state[:69]
+        # np.savez("./humanoid_climb/states/init_states.npz", states=state_data, stances=stance_data)
+        # print('data saved')
 
         self.desired_stance_index = 0
         self.set_next_desired_stance()

@@ -100,8 +100,9 @@ while True:
         paused = False
         score = 0
         step = 0
-        policy_idx = 0
-        model = PPO.load(os.path.join(policy_dir, policies[policy_idx]), env=vec_env)
+        if policy_idx != 0:
+            policy_idx = 0
+            model = PPO.load(os.path.join(policy_dir, policies[policy_idx]), env=vec_env)
         obs = vec_env.reset()
 
     # pause on space

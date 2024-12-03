@@ -118,6 +118,6 @@
     }
   },
 
-  "init_states_fn": "./humanoid_climb/states/state_10_9_2_1.npz"
+  "init_states_fn": "./humanoid_climb/states/init_states.npz"
 
 }

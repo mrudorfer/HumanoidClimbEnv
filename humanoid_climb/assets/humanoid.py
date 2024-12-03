@@ -114,6 +114,12 @@ class Humanoid:
             self.joints[joint].reset_position(0, 0)
 
     def set_state(self, state, stance):
+        """
+        set the state of the climber and attach it according to given stance
+        Args:
+            state: list, as returned by get_state
+            stance: list, keys of holds
+        """
         pos = state[0:3]
         ori = state[3:7]
         num_joints = self._p.getNumJoints(self.robot)
@@ -126,3 +132,18 @@ class Humanoid:
         for i, eff in enumerate(self.effectors):
             if stance[i] != -1:
                 self.force_attach(eff_index=i, target_key=stance[i], attach_pos=eff.current_position())
+
+    def get_state(self):
+        # pos[3], ori[4], (jointPos, jointVel), (jointPos, jointVel)...
+
+        pos, ori = self._p.getBasePositionAndOrientation(self.robot)
+        num_joints = self._p.getNumJoints(self.robot)
+        _joint_states = self._p.getJointStates(self.robot, [n for n in range(num_joints)])
+        joint_states = [s[:2] for s in _joint_states]
+
+        complete_state = []
+        complete_state += pos
+        complete_state += ori
+        for s in joint_states:
+            complete_state += s
+        return np.array(complete_state)
