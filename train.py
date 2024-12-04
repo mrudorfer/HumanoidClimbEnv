@@ -43,15 +43,15 @@ def train(env_name, sb3_algo, workers, n_steps, episode_steps, path_to_model=Non
 		"env_name": env_name,
 	}
 	run = wandb.init(
-		project="HumanoidClimb",
+		project="HumanoidClimbMulti",
 		config=config,
 		sync_tensorboard=True,  # auto-upload sb3's tensorboard metrics
 		monitor_gym=False,  # auto-upload the videos of agents playing the game
 		save_code=False,  # optional
 	)
 
-	climbing_config = ClimbingConfig('./configs/mid_transition.json')
-	# climbing_config = ClimbingConfig('./configs/first_transition.json')
+	climbing_config = ClimbingConfig(
+		'./configs/sim_config.json', './configs/simple_train_config.json')
 	max_ep_steps = episode_steps
 	gamma = 0.995
 	vec_env = SubprocVecEnv([make_env(env_name, i, climbing_config, max_steps=max_ep_steps) for i in range(workers)], start_method="spawn")

@@ -7,7 +7,6 @@ import pybullet_data
 
 from typing import Optional
 
-from jumpy.numpy import float32
 from pybullet_utils.bullet_client import BulletClient
 from humanoid_climb.assets.humanoid import Humanoid
 from humanoid_climb.assets.asset import Asset
@@ -16,6 +15,7 @@ from humanoid_climb.climbing_config import ClimbingConfig
 
 class HumanoidClimbEnv(gym.Env):
     metadata = {'render_modes': ['human', 'rgb_array'], 'render_fps': 60}
+    DYNAMIC_HOLD_NAMES = ['startLH', 'startRH', 'startLF', 'startRF', 'target']
 
     def __init__(self, config: ClimbingConfig, render_mode: Optional[str] = None, max_ep_steps: Optional[int] = 200):
         # general configuration
@@ -42,15 +42,24 @@ class HumanoidClimbEnv(gym.Env):
         self.floor = Asset(self._p, self.config.plane)
         self.wall = Asset(self._p, self.config.surface)
         self.climber = Humanoid(self._p, self.config.climber)
+        self.climber.reset()
 
-        self.targets = None
+        self.targets = {}
         if self.config.hold_definition == ClimbingConfig.HOLDS_PREDEFINED:
-            self.targets = dict()
             for key in self.config.holds:
                 self.targets[key] = Asset(self._p, self.config.holds[key])
-                self._p.addUserDebugText(text=key, textPosition=self.targets[key].body.initialPosition, textSize=0.7, lifeTime=0.0, textColorRGB=[0.0, 0.0, 1.0])
-            self.climber.targets = self.targets
+                self.add_text_to_hold(key)
 
+        elif self.config.hold_definition == ClimbingConfig.HOLDS_DYNAMIC:
+            # add placeholder holds
+            for key in self.DYNAMIC_HOLD_NAMES:
+                self.targets[key] = Asset(self._p, {
+                    'asset_data': ClimbingConfig.DEFAULT_HOLD_ASSET_DATA,
+                    'position': [0.0, 0.0, 0.0],
+                    'orientation': [0.0, 0.0, 0.0, 1.0],
+                })
+
+        self.climber.targets = self.targets
         self.debug_stance_text = self._p.addUserDebugText(text=f"", textPosition=[0, 0, 0], textSize=1, lifeTime=0.1, textColorRGB=[1.0, 0.0, 1.0])
 
         # initialization of variables
@@ -70,7 +79,6 @@ class HumanoidClimbEnv(gym.Env):
         self.desired_stance_index = 0
         self.grasp_status = []  # between 0 and 1, 1 meaning fully grasp and 0 is released.
         self.grasp_actions = []  # -1 (release), 0 (stay as is), 1 (grasp)
-
 
     def step(self, action):
         # apply torque actions
@@ -118,19 +126,77 @@ class HumanoidClimbEnv(gym.Env):
         self.np_random, _ = gym.utils.seeding.np_random(seed)
 
         self.steps = 0
-        if self.motion_path is not None:
-            self.current_stance = self.motion_path[0]
-
         self.climber.reset()
-        if self.init_states is not None:
-            idx = self.np_random.choice(len(self.init_states['states']))
-            self.climber.set_state(self.init_states['states'][idx], self.current_stance)
 
+        # pre-defined holds and stance path, not much to do
+        if self.config.hold_definition == ClimbingConfig.HOLDS_PREDEFINED \
+                and self.config.transition_definition == ClimbingConfig.TRANSITIONS_PREDEFINED:
+            # reset to initial stance and initialise state if required
+            self.current_stance = self.motion_path[0]
+            if self.init_states is not None:
+                idx = self.np_random.choice(len(self.init_states['states']))
+                self.climber.set_state(self.init_states['states'][idx], self.current_stance)
+
+        # dynamic holds and transitions
+        if self.config.hold_definition == ClimbingConfig.HOLDS_DYNAMIC \
+            and self.config.transition_definition == ClimbingConfig.TRANSITIONS_DYNAMIC:
+
+            assert self.config.hold_parameters['method'] == 'radius_around_hold'
+            assert self.config.transition_parameters['method'] == 'uniform_single_transitions'
+            assert self.init_states is not None
+
+            default_climber_z = 1.5
+
+            # set holds according to init state
+            idx = self.np_random.choice(len(self.init_states['states']))
+            state = self.init_states['states'][idx]
+            hold_pos = self.init_states['stances'][idx]
+
+            z_height = state[2]
+            z_diff = default_climber_z - z_height
+            state[2] += z_diff
+            for pos in hold_pos:
+                pos[2] += z_diff
+
+            for i in range(4):
+                key = self.DYNAMIC_HOLD_NAMES[i]
+                self.targets[key].body.reset_position(hold_pos[i])
+                self.add_text_to_hold(key, lifetime=1.0)
+
+            self.current_stance = self.DYNAMIC_HOLD_NAMES[:4]
+            self.climber.set_state(state, self.current_stance)
+
+            # define transition (motion path) and set target appropriately
+            limb_idx = self.np_random.choice(4)
+            target_key = self.DYNAMIC_HOLD_NAMES[-1]
+            self.motion_path = [
+                self.DYNAMIC_HOLD_NAMES[:4],
+                self.DYNAMIC_HOLD_NAMES[:4]
+            ]
+            self.motion_path[1][limb_idx] = target_key
+
+            # sample target randomly within disk according to https://stackoverflow.com/a/50746409/1264582
+            # sampling only in y and z coordinate, x stays the same (assuming orientation of wall)
+            pos = self.targets[self.DYNAMIC_HOLD_NAMES[limb_idx]].body.current_position()
+            min_radius = self.config.hold_parameters['min_radius']
+            max_radius = self.config.hold_parameters['max_radius']
+            radius = np.sqrt(self.np_random.uniform(low=min_radius**2, high=max_radius**2))
+            theta = self.np_random.uniform(low=0, high=2*np.pi)
+
+            target_pos = [
+                pos[0],
+                pos[1] + radius * np.cos(theta),
+                pos[2] + radius * np.sin(theta)
+            ]
+            self.targets[target_key].body.reset_position(target_pos)
+            self.add_text_to_hold(target_key, lifetime=1.0)
+
+        # todo: save state if transition successful (probably not here though)
         # print('temporary code execution')
         # stance_data = np.zeros(shape=(len(self.init_states), 4, 3), dtype=np.float32)
         # state_data = np.zeros(shape=(len(self.init_states), 69), dtype=np.float32)
         # for i in range(4):
-        #     stance_data[:, i] = self.targets[self.current_stance[i]].body.initialPosition
+        #     stance_data[:, i] = self.targets[self.current_stance[i]].body.current_position()
         # for i, state in enumerate(self.init_states):
         #     state_data[i] = state[:69]
         # np.savez("./humanoid_climb/states/init_states.npz", states=state_data, stances=stance_data)
@@ -168,7 +234,7 @@ class HumanoidClimbEnv(gym.Env):
                 pass
             else:
                 # get distance to target
-                eff_target = self.targets[c_stance].body.initialPosition
+                eff_target = self.targets[c_stance].body.current_position()
                 distances.append(np.linalg.norm(eff_target - np.array(eff_positions[i])))
 
         reward = np.clip(-1.0 * np.sum(distances), -2.0, float('inf'))
@@ -252,7 +318,7 @@ class HumanoidClimbEnv(gym.Env):
         hold_positions = []
         for key in stance:
             if key != -1:
-                pos = self.targets[key].body.initialPosition
+                pos = self.targets[key].body.current_position()
                 # pos, _ = self._p.getBasePositionAndOrientation(self.targets[key].id)
                 hold_positions.append(pos)
         center = np.asarray(hold_positions).mean(axis=0)
@@ -315,7 +381,7 @@ class HumanoidClimbEnv(gym.Env):
                 # no target! just assume current position is fine instead of giving arbitrary values
                 eff_target = eff_positions[i]
             else:
-                eff_target = self.targets[c_stance].body.initialPosition - base_pos
+                eff_target = self.targets[c_stance].body.current_position() - base_pos
 
             translation = eff_target - np.array(eff_positions[i])
             dist = np.linalg.norm(translation)
@@ -342,6 +408,10 @@ class HumanoidClimbEnv(gym.Env):
     def seed(self, seed=None):
         self.np_random, seed = gym.utils.seeding.np_random(seed)
         return [seed]
+
+    def add_text_to_hold(self, key, lifetime=0.0):
+        p_id = self._p.addUserDebugText(text=key, textPosition=self.targets[key].body.current_position(), textSize=0.7,
+                                 lifeTime=lifetime, textColorRGB=[0.0, 0.0, 1.0])
 
     def visualise_reward(self, reward, min, max):
         if self.render_mode != 'human': return

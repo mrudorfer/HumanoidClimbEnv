@@ -13,25 +13,7 @@ from humanoid_climb.climbing_config import ClimbingConfig
 # config_file = './configs/config.json'
 sim_config_fn = './configs/sim_config.json'
 climb_config_fn = './configs/simple_train_config.json'
-
-policies = [
-    # '1_10_9_n_n.zip',
-    # '2_10_9_2_n.zip',
-    # '3_10_9_2_1.zip',
-    # '4_10_13_2_1.zip',
-    # '5_10_13_2_5.zip',
-    # '6_13_13_n_5.zip',
-    # '7_13_13_6_5.zip',
-    # '8_14_13_6_5.zip',
-    # '9_14_17_6_5.zip',
-    # '10_14_17_n_9.zip',
-    # '11_14_17_10_9.zip',
-    # '12_18_17_10_9.zip',
-    # '13_18_20_10_9.zip',
-    # '14_20_20_10_9.zip',
-]
-policy_dir = './humanoid_climb/models/'
-policy_dir = './models/dzhmk5gh/models/'
+policy_dir = './models/f53ji5br/models/'
 policies = ['best_model.zip']
 stats_path = os.path.join(policy_dir, 'vecnormalize.pkl')
 

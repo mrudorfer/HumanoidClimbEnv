@@ -90,7 +90,7 @@ class Humanoid:
                                               childBodyUniqueId=target.id, childLinkIndex=-1,
                                               jointType=p.JOINT_POINT2POINT, jointAxis=[0, 0, 0],
                                               parentFramePosition=[0, 0, 0],
-                                              childFramePosition=np.subtract(attach_pos, target.body.initialPosition))
+                                              childFramePosition=np.subtract(attach_pos, target.body.current_position()))
         self._p.changeConstraint(userConstraintUniqueId=constraint, maxForce=force)
 
         self.effector_attached_to[eff_index] = target_key

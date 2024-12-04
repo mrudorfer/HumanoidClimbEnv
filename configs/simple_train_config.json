@@ -1,114 +1,15 @@
 {
-  "hold_definition": "predefined",
-  "holds": {
-    "hold_0": {
-      "asset": "asset_hold",
-      "position": [0.4, -0.9, 0.45],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_1": {
-      "asset": "asset_hold",
-      "position": [0.4, -0.3, 0.25],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_2": {
-      "asset": "asset_hold",
-      "position": [0.4, 0.3, 0.45],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_3": {
-      "asset": "asset_hold",
-      "position": [0.4, 0.9, 0.25],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_4": {
-      "asset": "asset_hold",
-      "position": [0.4, -0.9, 1.1],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_5": {
-      "asset": "asset_hold",
-      "position": [0.4, -0.3, 0.9],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_6": {
-      "asset": "asset_hold",
-      "position": [0.4, 0.3, 1.1],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_7": {
-      "asset": "asset_hold",
-      "position": [0.4, 0.9, 0.9],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_8": {
-      "asset": "asset_hold",
-      "position": [0.4, -0.7, 1.9],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_9": {
-      "asset": "asset_hold",
-      "position": [0.4, -0.3, 1.55],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_10": {
-      "asset": "asset_hold",
-      "position": [0.4, 0.3, 1.75],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_11": {
-      "asset": "asset_hold",
-      "position": [0.4, 0.9, 1.55],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_12": {
-      "asset": "asset_hold",
-      "position": [0.4, -0.9, 2.4],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_13": {
-      "asset": "asset_hold",
-      "position": [0.4, -0.3, 2.2],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_14": {
-      "asset": "asset_hold",
-      "position": [0.4, 0.3, 2.4],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_15": {
-      "asset": "asset_hold",
-      "position": [0.4, 0.9, 2.2],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_16": {
-      "asset": "asset_hold",
-      "position": [0.4, -0.9, 3.05],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_17": {
-      "asset": "asset_hold",
-      "position": [0.4, -0.3, 2.85],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_18": {
-      "asset": "asset_hold",
-      "position": [0.4, 0.3, 3.05],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_19": {
-      "asset": "asset_hold",
-      "position": [0.4, 0.9, 2.85],
-      "orientation": [0, 0, 0, 1]
-    },
-    "hold_20": {
-      "asset": "asset_hold",
-      "position": [0.4, 0, 3.5],
-      "orientation": [0, 0, 0, 1]
-    }
+  "hold_definition": "dynamic",
+  "hold_parameters": {
+    "method": "radius_around_hold",
+    "min_radius": 0.15,
+    "max_radius": 0.5
+  },
+  "transition_definition": "dynamic",
+  "transition_parameters": {
+    "method": "uniform_single_transitions"
   },
 
-  "transition_definition": "predefined",
   "stance_path": {
     "0": {
       "desired_holds": ["hold_10", "hold_9", "hold_2", "hold_1"]
