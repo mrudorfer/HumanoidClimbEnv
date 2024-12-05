@@ -6,7 +6,7 @@
     <link name="wall">
         <visual>
             <geometry>
-                <box size="0.1 2.5 4" />
+                <box size="0.1 4.0 6.0" />
             </geometry>
             <material name="white"/>
         </visual>
