@@ -67,9 +67,7 @@ class HumanoidClimbEnv(gym.Env):
         if self.config.transition_definition == ClimbingConfig.TRANSITIONS_PREDEFINED:
             self.motion_path = [self.config.stance_path[stance]['desired_holds'] for stance in self.config.stance_path]
 
-        self.init_states = None
-        if self.config.init_states_fn is not None:
-            self.init_states = dict(np.load(self.config.init_states_fn))
+        self.init_states = dict(np.load(self.config.init_states_fn))
         self.sim_steps_per_action = self.config.sim_steps_per_action
 
         self.steps = 0
@@ -79,6 +77,11 @@ class HumanoidClimbEnv(gym.Env):
         self.desired_stance_index = 0
         self.grasp_status = []  # between 0 and 1, 1 meaning fully grasp and 0 is released.
         self.grasp_actions = []  # -1 (release), 0 (stay as is), 1 (grasp)
+
+        self.collected_states = {
+            'states': [],
+            'stances': []
+        }
 
     def step(self, action):
         # apply torque actions
@@ -98,6 +101,9 @@ class HumanoidClimbEnv(gym.Env):
         grasp_actions_done = np.sum(self.grasp_actions) == 0
         stance_reached = (self.current_stance == self.desired_stance) and grasp_actions_done
         goal_reached = (self.current_stance == self.motion_path[-1]) and grasp_actions_done
+
+        if stance_reached:
+            self.collect_current_state()
 
         # advance to next stance transition
         if stance_reached and not goal_reached:
@@ -133,29 +139,31 @@ class HumanoidClimbEnv(gym.Env):
                 and self.config.transition_definition == ClimbingConfig.TRANSITIONS_PREDEFINED:
             # reset to initial stance and initialise state if required
             self.current_stance = self.motion_path[0]
-            if self.init_states is not None:
-                idx = self.np_random.choice(len(self.init_states['states']))
-                self.climber.set_state(self.init_states['states'][idx], self.current_stance)
+            idx = self.np_random.choice(len(self.init_states['states']))
+            self.climber.set_state(self.init_states['states'][idx], self.current_stance)
 
         # dynamic holds and transitions
         if self.config.hold_definition == ClimbingConfig.HOLDS_DYNAMIC \
             and self.config.transition_definition == ClimbingConfig.TRANSITIONS_DYNAMIC:
 
-            assert self.config.hold_parameters['method'] == 'radius_around_hold'
-            assert self.config.transition_parameters['method'] == 'uniform_single_transitions'
-            assert self.init_states is not None
+            assert self.config.hold_parameters['method'] in ['radius_around_hold', 'naderi_et_al']
+            assert self.config.transition_parameters['method'] in ['uniform_single_transitions']
 
-            default_climber_z = 1.5
+            default_climber_z = 2.0
+            default_climber_y = 0.0
 
-            # set holds according to init state
+            # set holds according to init state, adjust for height to ensure climber is off the ground
             idx = self.np_random.choice(len(self.init_states['states']))
             state = self.init_states['states'][idx]
             hold_pos = self.init_states['stances'][idx]
 
-            z_height = state[2]
-            z_diff = default_climber_z - z_height
+            y_val, z_val = state[1], state[2]
+            z_diff = default_climber_z - z_val
+            y_diff = default_climber_y - y_val
+            state[1] += y_diff
             state[2] += z_diff
             for pos in hold_pos:
+                pos[1] += y_diff
                 pos[2] += z_diff
 
             for i in range(4):
@@ -175,32 +183,46 @@ class HumanoidClimbEnv(gym.Env):
             ]
             self.motion_path[1][limb_idx] = target_key
 
-            # sample target randomly within disk according to https://stackoverflow.com/a/50746409/1264582
-            # sampling only in y and z coordinate, x stays the same (assuming orientation of wall)
-            pos = self.targets[self.DYNAMIC_HOLD_NAMES[limb_idx]].body.current_position()
-            min_radius = self.config.hold_parameters['min_radius']
-            max_radius = self.config.hold_parameters['max_radius']
-            radius = np.sqrt(self.np_random.uniform(low=min_radius**2, high=max_radius**2))
-            theta = self.np_random.uniform(low=0, high=2*np.pi)
+            if self.config.hold_parameters['method'] == 'radius_around_hold':
+                # sample target randomly within disk according to https://stackoverflow.com/a/50746409/1264582
+                # sampling only in y and z coordinate, x stays the same (assuming orientation of wall)
+                pos = self.targets[self.DYNAMIC_HOLD_NAMES[limb_idx]].body.current_position()
+                min_radius = self.config.hold_parameters['min_radius']
+                max_radius = self.config.hold_parameters['max_radius']
+                radius = np.sqrt(self.np_random.uniform(low=min_radius**2, high=max_radius**2))
+                theta = self.np_random.uniform(low=0, high=2*np.pi)
 
-            target_pos = [
-                pos[0],
-                pos[1] + radius * np.cos(theta),
-                pos[2] + radius * np.sin(theta)
-            ]
+                target_pos = [
+                    pos[0],
+                    pos[1] + radius * np.cos(theta),
+                    pos[2] + radius * np.sin(theta)
+                ]
+            elif self.config.hold_parameters['method'] == 'naderi_et_al':
+                # sample target within semi-circle based on limb
+                hip_pos = self.climber.parts['pelvis'].current_position()
+                max_radius = self.config.hold_parameters['r_body']
+                radius = np.sqrt(self.np_random.uniform(low=0, high=max_radius**2))
+                theta = self.np_random.uniform(low=0, high=np.pi)  # semi-circle
+
+                # offset semicircle based on limb idx: LH, RH, LF, RF
+                # a zero offset is the upper semicircle
+                offset = {
+                    0: -np.pi / 4,
+                    1: np.pi / 4,
+                    2: -3 * np.pi / 4,
+                    3: 3 * np.pi / 4
+                }
+                target_pos = [
+                    self.targets[self.DYNAMIC_HOLD_NAMES[0]].body.current_position()[0],
+                    hip_pos[1] + radius * np.cos(theta + offset[limb_idx]),
+                    hip_pos[2] + radius * np.sin(theta + offset[limb_idx])
+                ]
+            else:
+                raise ValueError('unknown method')
+
+
             self.targets[target_key].body.reset_position(target_pos)
             self.add_text_to_hold(target_key, lifetime=1.0)
-
-        # todo: save state if transition successful (probably not here though)
-        # print('temporary code execution')
-        # stance_data = np.zeros(shape=(len(self.init_states), 4, 3), dtype=np.float32)
-        # state_data = np.zeros(shape=(len(self.init_states), 69), dtype=np.float32)
-        # for i in range(4):
-        #     stance_data[:, i] = self.targets[self.current_stance[i]].body.current_position()
-        # for i, state in enumerate(self.init_states):
-        #     state_data[i] = state[:69]
-        # np.savez("./humanoid_climb/states/init_states.npz", states=state_data, stances=stance_data)
-        # print('data saved')
 
         self.desired_stance_index = 0
         self.set_next_desired_stance()
@@ -324,10 +346,59 @@ class HumanoidClimbEnv(gym.Env):
         center = np.asarray(hold_positions).mean(axis=0)
         return center
 
+    def collect_current_state(self):
+        state_data = self.climber.get_state()
+        stance_data = np.zeros(shape=(4, 3), dtype=np.float32)
+        for i in range(4):
+            assert self.current_stance[i] != -1  # todo: handle this properly
+            stance_data[i] = self.targets[self.current_stance[i]].body.current_position()
+
+        self.collected_states['states'].append(state_data)
+        self.collected_states['stances'].append(stance_data)
+
+    def pop_collected_states(self):
+        collected_states = self.collected_states
+        self.collected_states = {
+            'states': [],
+            'stances': []
+        }
+        return collected_states
+
+    def reload_init_states(self):
+        self.init_states = dict(np.load(self.config.init_states_fn))
+
     def visualise_climber_pos(self):
-        pos, orn = self._p.getBasePositionAndOrientation(self.climber.robot)
+        # pos, orn = self._p.getBasePositionAndOrientation(self.climber.robot)
+        pos = self.climber.parts['pelvis'].current_position()
         visual_shape = self._p.createVisualShape(p.GEOM_SPHERE, radius=0.2, rgbaColor=[1, 0, 0, 1])
         body_id = self._p.createMultiBody(baseMass=0, baseVisualShapeIndex=visual_shape, basePosition=pos)
+
+        visual_shape = self._p.createVisualShape(p.GEOM_SPHERE, radius=1.3, rgbaColor=[0.8, 0.8, 0.8, 0.2])
+        body_id = self._p.createMultiBody(baseMass=0, baseVisualShapeIndex=visual_shape, basePosition=pos)
+
+        visual_shape = self._p.createVisualShape(p.GEOM_SPHERE, radius=0.05, rgbaColor=[0.8, 0.2, 0.2, 0.5])
+
+        thetas = np.linspace(start=0, stop=np.pi, endpoint=True, num=30)  # semi-circle
+        for theta in thetas:
+            max_radius = self.config.hold_parameters['r_body']
+            radius = max_radius
+
+            # offset semicircle based on limb idx: LH, RH, LF, RF
+            # a zero offset is the upper semicircle
+            offset = {
+                0: -np.pi/4,
+                1: np.pi / 4,
+                2: -3*np.pi/4,
+                3: 3*np.pi/4
+            }
+            limb_idx = 3
+            target_pos = [
+                self.targets[self.DYNAMIC_HOLD_NAMES[0]].body.current_position()[0],
+                pos[1] + radius * np.cos(theta + offset[limb_idx]),
+                pos[2] + radius * np.sin(theta + offset[limb_idx])
+            ]
+            self._p.createMultiBody(baseMass=0, baseVisualShapeIndex=visual_shape, basePosition=target_pos)
+        self._p.createMultiBody(baseMass=0, baseVisualShapeIndex=visual_shape, basePosition=[0.0, 0.0, 3.0])
 
     def _get_obs_dim(self):
         return 7 + 17 * 2 + 17 * 13 + 4 * 9  # = 271

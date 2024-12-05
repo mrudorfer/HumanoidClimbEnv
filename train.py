@@ -5,18 +5,19 @@ import gymnasium as gym
 import pybullet as p
 import stable_baselines3 as sb
 import os
+import shutil
 import argparse
 
 from stable_baselines3.common.monitor import Monitor
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecVideoRecorder, VecFrameStack, VecNormalize
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
 from stable_baselines3.common.utils import set_random_seed
-from stable_baselines3.common.callbacks import EvalCallback
+from torch.backends.mkl import verbose
 
 import wandb
 from wandb.integration.sb3 import WandbCallback
 import humanoid_climb.stances as stances
 from humanoid_climb.climbing_config import ClimbingConfig
-from callbacks import CustomCallback, CustomEvalCallback
+from callbacks import CustomEvalCallback, UpdateInitStatesCallback, linear_schedule
 
 # Create directories to hold models and logs
 model_dir = "models"
@@ -54,22 +55,34 @@ def train(env_name, sb3_algo, workers, n_steps, episode_steps, path_to_model=Non
 		'./configs/sim_config.json', './configs/simple_train_config.json')
 	max_ep_steps = episode_steps
 	gamma = 0.995
-	vec_env = SubprocVecEnv([make_env(env_name, i, climbing_config, max_steps=max_ep_steps) for i in range(workers)], start_method="spawn")
+	save_path = f"{model_dir}/{run.id}"
+
+	# copy init states file and put it into the model dir
+	os.makedirs(save_path, exist_ok=True)
+	new_init_state_fn = os.path.join(save_path, 'init_states.npz')
+	shutil.copy(climbing_config.init_states_fn, new_init_state_fn)
+	climbing_config.init_states_fn = new_init_state_fn
+
+	# create envs
+	vec_env = SubprocVecEnv(
+		[make_env(env_name, i, climbing_config, max_steps=max_ep_steps) for i in range(workers)],
+		start_method="spawn"
+	)
 	vec_env = VecNormalize(vec_env, norm_obs=True, norm_reward=True, clip_obs=10.0, gamma=gamma)
 
-	model = None
-	save_path = f"{model_dir}/{run.id}"
 
 	eval_callback = CustomEvalCallback(vec_env, best_model_save_path=f"{save_path}/models/", log_path=f"{save_path}/logs/",
 									   eval_freq=500, deterministic=True, render=False)
-	cust_callback = CustomCallback()
+
+	cust_callback = UpdateInitStatesCallback(vec_env, climbing_config.init_states_fn, verbose=2)
 
 	if sb3_algo == 'PPO':
 		if path_to_model is None:
 			policy_kwargs = dict(net_arch=[256, 256, 256])
 			model = sb.PPO('MlpPolicy', vec_env, verbose=1, device='cuda', tensorboard_log=log_dir,
-						   batch_size=2048, n_epochs=5, ent_coef=0.005, gamma=gamma, clip_range=0.2,
-						   n_steps=2048, learning_rate=0.0003, policy_kwargs=policy_kwargs)
+						   batch_size=2048, n_epochs=5, ent_coef=0.001, gamma=gamma, clip_range=0.2,
+						   n_steps=2048, learning_rate=linear_schedule(0.0005, 0.000001),
+						   policy_kwargs=policy_kwargs)
 		else:
 			model = sb.PPO.load(path_to_model, env=vec_env)
 	elif sb3_algo == 'SAC':
@@ -146,7 +159,7 @@ if __name__ == '__main__':
 	parser.add_argument('-t', '--train', action='store_true')
 	parser.add_argument('-f', '--file', required=False, default=None)
 	parser.add_argument('-s', '--test', metavar='path_to_model')
-	parser.add_argument('-n', '--n_steps', type=int, default=int(50_000_000))
+	parser.add_argument('-n', '--n_steps', type=int, default=int(100_000_000))
 	parser.add_argument('-e', '--episode_steps', type=int, default=int(200))
 
 	args = parser.parse_args()

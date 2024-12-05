@@ -7,17 +7,72 @@ import gymnasium as gym
 from stable_baselines3.common.evaluation import evaluate_policy
 from stable_baselines3.common.vec_env import DummyVecEnv, VecEnv, sync_envs_normalization
 
-class CustomCallback(BaseCallback):
-	def __init__(self, verbose: int = 0):
-		super().__init__(verbose)
-		self.rollout_count = 0
 
-	def _on_step(self) -> bool:
-		return True
+def linear_schedule(initial_value, final_value=0.0):
+    def func(progress):
+        # progress decreases from 1.0 to 0.0
+        new_value = progress * (initial_value - final_value) + final_value
+        return new_value
+    return func
 
-	def _on_rollout_end(self) -> None:
-		self.rollout_count += 1
-		self.logger.record("climb/rollout_count", self.rollout_count)
+class UpdateInitStatesCallback(BaseCallback):
+    def __init__(self, env: Union[gym.Env, VecEnv], state_fn: str, verbose: int = 0):
+        super().__init__(verbose)
+        self.added_states_count = 0
+
+        # convert env to VecEnv for consistency
+        if not isinstance(env, VecEnv):
+            env = DummyVecEnv([lambda: env])
+        self.vec_env = env
+        self.state_fn = state_fn
+
+        self.rng = np.random.default_rng()
+        self.start_prob = 0.5
+        self.min_prob = 0.01
+        self.fade_out = 25_000
+
+    def _on_step(self) -> bool:
+        # nothing to be done here
+        return True
+
+    def _on_rollout_end(self) -> None:
+        data = self.vec_env.env_method('pop_collected_states')  # todo: gives warning, but no idea how to do properly
+        collected_states = []
+        collected_stances = []
+
+        for elem in data:
+            states, stances = elem['states'], elem['stances']
+            if states and stances:
+                collected_states.extend(states)
+                collected_stances.extend(stances)
+
+        if collected_states and collected_stances:
+            collected_states = np.stack(collected_states)
+            collected_stances = np.stack(collected_stances)
+
+            # calculate probability of adding new states
+            progress = max(0.0, 1.0 * (self.fade_out - self.added_states_count) / self.fade_out)  # 1 initially, goes down to 0
+            prob = progress * (self.start_prob - self.min_prob) + self.min_prob
+            select_idx = self.rng.uniform(size=len(collected_states)) < prob
+
+            if self.verbose >= 1:
+                print(f'Collecting states...')
+                print(f'All collected states {collected_states.shape} and stances {collected_stances.shape}')
+                print(f'Already added states {self.added_states_count}/{self.fade_out}; progress {progress:.4f}')
+                print(f'Probability is {prob:.4f}, selection ratio {np.sum(select_idx)/len(collected_states):.4f}. selected {np.sum(select_idx)} out of {len(collected_states)}')
+
+            if np.any(select_idx):
+                data = dict(np.load(self.state_fn, allow_pickle=True))
+                init_states = data['states']
+                init_stances = data['stances']
+                data['states'] = np.concatenate([init_states, collected_states[select_idx]])
+                data['stances'] = np.concatenate([init_stances, collected_stances[select_idx]])
+                np.savez(self.state_fn, **data)
+
+                self.added_states_count += np.sum(select_idx)
+                self.vec_env.env_method('reload_init_states')
+
+        self.logger.record("curriculum/added_states_count", self.added_states_count)
 
 
 class CustomEvalCallback(EventCallback):
