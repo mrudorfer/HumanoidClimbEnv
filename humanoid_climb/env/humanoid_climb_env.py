@@ -11,6 +11,7 @@ from pybullet_utils.bullet_client import BulletClient
 from humanoid_climb.assets.humanoid import Humanoid
 from humanoid_climb.assets.asset import Asset
 from humanoid_climb.climbing_config import ClimbingConfig
+from humanoid_climb.reachability_map import ReachabilityMap, Single3DMap
 
 
 class HumanoidClimbEnv(gym.Env):
@@ -58,6 +59,10 @@ class HumanoidClimbEnv(gym.Env):
                     'position': [0.0, 0.0, 0.0],
                     'orientation': [0.0, 0.0, 0.0, 1.0],
                 })
+
+        self.rmap = None
+        if self.config.hold_definition == ClimbingConfig.HOLDS_DYNAMIC and self.config.hold_parameters['method'] == 'rmap':
+            self.rmap = ReachabilityMap.from_file(self.config.hold_parameters['rmap_fn'])
 
         self.climber.targets = self.targets
         self.debug_stance_text = self._p.addUserDebugText(text=f"", textPosition=[0, 0, 0], textSize=1, lifeTime=0.1, textColorRGB=[1.0, 0.0, 1.0])
@@ -146,7 +151,7 @@ class HumanoidClimbEnv(gym.Env):
         if self.config.hold_definition == ClimbingConfig.HOLDS_DYNAMIC \
             and self.config.transition_definition == ClimbingConfig.TRANSITIONS_DYNAMIC:
 
-            assert self.config.hold_parameters['method'] in ['radius_around_hold', 'naderi_et_al']
+            assert self.config.hold_parameters['method'] in ['radius_around_hold', 'naderi_et_al', 'rmap']
             assert self.config.transition_parameters['method'] in ['uniform_single_transitions']
 
             default_climber_z = 2.0
@@ -173,6 +178,7 @@ class HumanoidClimbEnv(gym.Env):
 
             self.current_stance = self.DYNAMIC_HOLD_NAMES[:4]
             self.climber.set_state(state, self.current_stance)
+            climber_pos, climber_orn = state[:3], state[3:7]
 
             # define transition (motion path) and set target appropriately
             limb_idx = self.np_random.choice(4)
@@ -217,6 +223,19 @@ class HumanoidClimbEnv(gym.Env):
                     hip_pos[1] + radius * np.cos(theta + offset[limb_idx]),
                     hip_pos[2] + radius * np.sin(theta + offset[limb_idx])
                 ]
+
+            elif self.config.hold_parameters['method'] == 'rmap':
+                # get map for limb index
+                limb_map = list(self.rmap.maps.values())[limb_idx]
+                coords, vals = limb_map.get_slice(pos=climber_pos, orn=climber_orn)
+                if coords is None:
+                    print('WARNING: RMAP did not find suitable target location. Retry...')
+                    return self.reset(seed, options)
+
+                # sample coords by weight of value
+                probs = vals / np.sum(vals)
+                select_idx = self.np_random.choice(len(coords), p=probs)
+                target_pos = coords[select_idx]
             else:
                 raise ValueError('unknown method')
 

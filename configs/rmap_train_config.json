@@ -1,0 +1,14 @@
+{
+  "hold_definition": "dynamic",
+  "hold_parameters": {
+    "method": "rmap",
+    "rmap_fn": "./maps/rmap_10M.npz"
+  },
+  "transition_definition": "dynamic",
+  "transition_parameters": {
+    "method": "uniform_single_transitions"
+  },
+
+  "init_states_fn": "./humanoid_climb/states/init_states.npz"
+
+}
