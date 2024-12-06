@@ -147,3 +147,42 @@ class Humanoid:
         for s in joint_states:
             complete_state += s
         return np.array(complete_state)
+
+    def set_random_joint_config(self, rng=None):
+        if rng is None:
+            rng = np.random.default_rng()
+
+        for key, joint in self.joints.items():
+            if joint.lowerLimit == joint.upperLimit:
+                continue
+            value = rng.uniform(low=joint.lowerLimit, high=joint.upperLimit)
+            self._p.resetJointState(self.robot, joint.jointIndex, value)
+
+    def get_manipulability(self, use_rotation=False):
+        """
+        Calculates the manipulability after Yoshikawa 1983 for each end-effector
+        :param use_rotation: bool, if False, considers only jac_t, if True, considers both jac_t and jac_r
+        :return: list of float values, indicating manipulability for each EE
+        """
+        manipulabilities = []
+
+        num_active_joints = len(self.joints)
+        zero_vec = [0.0] * num_active_joints
+        local_pos = [0.0, 0.0, 0.0]
+
+        _joint_states = self._p.getJointStates(self.robot, [joint.jointIndex for joint in self.joints.values()])
+        joint_pos = [s[0] for s in _joint_states]
+
+        for effector in self.effectors:
+            jac_t, jac_r = p.calculateJacobian(self.robot, effector.bodyPartIndex, local_pos, joint_pos,
+                                           zero_vec, zero_vec)
+
+            jac = np.asarray(jac_t)
+            if use_rotation:
+                jac_r = np.asarray(jac_r)
+                jac = np.concatenate([jac, jac_r], axis=0)
+
+            m = np.sqrt(np.linalg.det(jac @ jac.T))
+            manipulabilities.append(m)
+
+        return manipulabilities
