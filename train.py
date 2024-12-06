@@ -17,7 +17,7 @@ import wandb
 from wandb.integration.sb3 import WandbCallback
 import humanoid_climb.stances as stances
 from humanoid_climb.climbing_config import ClimbingConfig
-from callbacks import CustomEvalCallback, UpdateInitStatesCallback, linear_schedule
+from callbacks import CustomEvalCallback, UpdateInitStatesCallback, linear_schedule, step_schedule
 
 # Create directories to hold models and logs
 model_dir = "models"
@@ -81,7 +81,8 @@ def train(env_name, sb3_algo, workers, n_steps, episode_steps, path_to_model=Non
 			policy_kwargs = dict(net_arch=[256, 256, 256])
 			model = sb.PPO('MlpPolicy', vec_env, verbose=1, device='cuda', tensorboard_log=log_dir,
 						   batch_size=2048, n_epochs=5, ent_coef=0.001, gamma=gamma, clip_range=0.2,
-						   n_steps=2048, learning_rate=linear_schedule(0.0005, 0.000001),
+						   # n_steps=2048, learning_rate=linear_schedule(0.0005, 0.000001),
+						   n_steps=2048, learning_rate=step_schedule(0.0005),
 						   policy_kwargs=policy_kwargs)
 		else:
 			model = sb.PPO.load(path_to_model, env=vec_env)
@@ -161,6 +162,7 @@ if __name__ == '__main__':
 	parser.add_argument('-s', '--test', metavar='path_to_model')
 	parser.add_argument('-n', '--n_steps', type=int, default=int(100_000_000))
 	parser.add_argument('-e', '--episode_steps', type=int, default=int(200))
+	parser.add_argument('-c', '--config', type=str, help='path to config file', default='./configs/simple_train_config.json')
 
 	args = parser.parse_args()
 
