@@ -15,6 +15,17 @@ def linear_schedule(initial_value, final_value=0.0):
         return new_value
     return func
 
+
+def step_schedule(initial_value):
+    def func(progress):
+        if progress > 0.5:
+            return initial_value
+        if progress > 0.25:
+            return initial_value / 2
+        else:
+            return initial_value / 4
+    return func
+
 class UpdateInitStatesCallback(BaseCallback):
     def __init__(self, env: Union[gym.Env, VecEnv], state_fn: str, verbose: int = 0):
         super().__init__(verbose)
@@ -27,9 +38,9 @@ class UpdateInitStatesCallback(BaseCallback):
         self.state_fn = state_fn
 
         self.rng = np.random.default_rng()
-        self.start_prob = 0.5
+        self.start_prob = 1.0  # 0.5
         self.min_prob = 0.01
-        self.fade_out = 25_000
+        self.fade_out = 50_000  # 25_000
 
     def _on_step(self) -> bool:
         # nothing to be done here
