@@ -174,11 +174,7 @@ class Single3DMap:
             epsilon = self.voxel_res / 2
 
         coords, values = self.get_coordinate_map(pos, orn)
-        print(coords.shape, values.shape)
         mask = np.logical_and(coords[:, 0] > x-epsilon, coords[:, 0] < x+epsilon)
-        print('mask:', np.count_nonzero(mask))
-        print('max x', np.max(coords[:, 0]))
-        print('min x', np.min(coords[:, 0]))
 
         if not np.any(mask):
             return None, None
